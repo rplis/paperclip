@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MailPlus } from "lucide-react";
+import { Copy, ExternalLink, MailPlus } from "lucide-react";
 import { accessApi } from "@/api/access";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,30 @@ export function CompanyInvites() {
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [humanRole, setHumanRole] = useState<"owner" | "admin" | "operator" | "viewer">("operator");
+  const [latestInviteUrl, setLatestInviteUrl] = useState<string | null>(null);
+
+  async function copyInviteUrl(url: string) {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        pushToast({
+          title: "Invite copied",
+          body: "Invite link copied to clipboard.",
+          tone: "success",
+        });
+        return true;
+      }
+    } catch {
+      // Fall through to the unavailable message below.
+    }
+
+    pushToast({
+      title: "Clipboard unavailable",
+      body: "Copy the invite URL manually from the field below.",
+      tone: "warn",
+    });
+    return false;
+  }
 
   useEffect(() => {
     setBreadcrumbs([
@@ -66,21 +90,13 @@ export function CompanyInvites() {
         agentMessage: null,
       }),
     onSuccess: async (invite) => {
-      let copied = false;
-
-      try {
-        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(invite.inviteUrl);
-          copied = true;
-        }
-      } catch {
-        copied = false;
-      }
+      setLatestInviteUrl(invite.inviteUrl);
+      const copied = await copyInviteUrl(invite.inviteUrl);
 
       await queryClient.invalidateQueries({ queryKey: queryKeys.access.invites(selectedCompanyId!, "all") });
       pushToast({
         title: "Invite created",
-        body: copied ? "Invite link copied to clipboard." : "Invite link created, but clipboard copy was unavailable.",
+        body: copied ? "Invite ready below and copied to clipboard." : "Invite ready below.",
         tone: "success",
       });
     },
@@ -192,6 +208,32 @@ export function CompanyInvites() {
           </Button>
           <span className="text-sm text-muted-foreground">Invite history below keeps the audit trail.</span>
         </div>
+
+        {latestInviteUrl ? (
+          <div className="space-y-3 rounded-lg border border-border px-4 py-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Latest invite link</div>
+              <div className="text-sm text-muted-foreground">
+                This URL includes the current Paperclip domain returned by the server.
+              </div>
+            </div>
+            <div className="rounded-md border border-border bg-background px-3 py-2 text-sm break-all">
+              {latestInviteUrl}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => void copyInviteUrl(latestInviteUrl)}>
+                <Copy className="h-4 w-4" />
+                Copy link
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <a href={latestInviteUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="h-4 w-4" />
+                  Open invite
+                </a>
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-border">

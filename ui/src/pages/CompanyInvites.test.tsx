@@ -191,11 +191,27 @@ describe("CompanyInvites", () => {
       agentMessage: null,
     });
     expect(clipboardWriteTextMock).toHaveBeenCalledWith("https://paperclip.local/invite/new-token");
+    expect(container.textContent).toContain("Latest invite link");
+    expect(container.textContent).toContain("This URL includes the current Paperclip domain returned by the server.");
+    expect(container.textContent).toContain("https://paperclip.local/invite/new-token");
+    expect(container.textContent).toContain("Copy link");
+    expect(container.textContent).toContain("Open invite");
     expect(pushToastMock).toHaveBeenCalledWith({
       title: "Invite created",
-      body: "Invite link copied to clipboard.",
+      body: "Invite ready below and copied to clipboard.",
       tone: "success",
     });
+
+    const copyLinkButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Copy link"),
+    );
+
+    await act(async () => {
+      copyLinkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    expect(clipboardWriteTextMock).toHaveBeenCalledTimes(2);
 
     await act(async () => {
       revokeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));

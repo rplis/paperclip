@@ -861,6 +861,7 @@ function toInviteSummaryResponse(
   companyName: string | null = null
 ) {
   const baseUrl = requestBaseUrl(req);
+  const invitePath = `/invite/${token}`;
   const onboardingPath = `/api/invites/${token}/onboarding`;
   const onboardingTextPath = `/api/invites/${token}/onboarding.txt`;
   const inviteMessage = extractInviteMessage(invite);
@@ -871,6 +872,8 @@ function toInviteSummaryResponse(
     inviteType: invite.inviteType,
     allowedJoinTypes: invite.allowedJoinTypes,
     expiresAt: invite.expiresAt,
+    invitePath,
+    inviteUrl: baseUrl ? `${baseUrl}${invitePath}` : invitePath,
     onboardingPath,
     onboardingUrl: baseUrl ? `${baseUrl}${onboardingPath}` : onboardingPath,
     onboardingTextPath,
@@ -1976,7 +1979,8 @@ export function accessRoutes(
       res.status(201).json({
         ...created,
         token,
-        inviteUrl: `/invite/${token}`,
+        invitePath: inviteSummary.invitePath,
+        inviteUrl: inviteSummary.inviteUrl,
         companyName,
         onboardingTextPath: inviteSummary.onboardingTextPath,
         onboardingTextUrl: inviteSummary.onboardingTextUrl,
@@ -2028,7 +2032,8 @@ export function accessRoutes(
       res.status(201).json({
         ...created,
         token,
-        inviteUrl: `/invite/${token}`,
+        invitePath: inviteSummary.invitePath,
+        inviteUrl: inviteSummary.inviteUrl,
         companyName,
         onboardingTextPath: inviteSummary.onboardingTextPath,
         onboardingTextUrl: inviteSummary.onboardingTextUrl,
