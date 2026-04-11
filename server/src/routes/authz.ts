@@ -7,6 +7,24 @@ export function assertBoard(req: Request) {
   }
 }
 
+export function hasBoardOrgAccess(req: Request) {
+  if (req.actor.type !== "board") {
+    return false;
+  }
+  if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
+    return true;
+  }
+  return Array.isArray(req.actor.companyIds) && req.actor.companyIds.length > 0;
+}
+
+export function assertBoardOrgAccess(req: Request) {
+  assertBoard(req);
+  if (hasBoardOrgAccess(req)) {
+    return;
+  }
+  throw forbidden("Company membership or instance admin access required");
+}
+
 export function assertInstanceAdmin(req: Request) {
   assertBoard(req);
   if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {

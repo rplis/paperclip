@@ -28,7 +28,7 @@ const overridingConfigSchemaAdapter: ServerAdapterModule = {
   }),
 };
 
-function createApp() {
+function createApp(actorOverrides: Partial<Express.Request["actor"]> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -38,6 +38,7 @@ function createApp() {
       companyIds: [],
       source: "local_implicit",
       isInstanceAdmin: false,
+      ...actorOverrides,
     };
     next();
   });
@@ -74,5 +75,19 @@ describe("adapter routes", () => {
     const builtin = await request(app).get("/api/adapters/claude_local/config-schema");
     expect(builtin.status, JSON.stringify(builtin.body)).toBe(404);
     expect(String(builtin.body.error ?? "")).toContain("does not provide a config schema");
+  });
+
+  it("rejects signed-in users without org access", async () => {
+    const app = createApp({
+      userId: "outsider-1",
+      source: "session",
+      companyIds: [],
+      memberships: [],
+      isInstanceAdmin: false,
+    });
+
+    const res = await request(app).get("/api/adapters/claude_local/config-schema");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
   });
 });

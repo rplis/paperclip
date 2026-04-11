@@ -207,6 +207,15 @@ export type UserCompanyAccessResponse = {
   companyAccess: UserCompanyAccessEntry[];
 };
 
+export type CurrentBoardAccess = {
+  user: { id: string; email: string | null; name: string | null; image: string | null } | null;
+  userId: string;
+  isInstanceAdmin: boolean;
+  companyIds: string[];
+  source: string;
+  keyId: string | null;
+};
+
 export const accessApi = {
   createCompanyInvite: (
     companyId: string,
@@ -326,4 +335,7 @@ export const accessApi = {
 
   setUserCompanyAccess: (userId: string, companyIds: string[]) =>
     api.put<UserCompanyAccessResponse>(`/admin/users/${userId}/company-access`, { companyIds }),
+
+  getCurrentBoardAccess: () =>
+    api.get<CurrentBoardAccess>("/cli-auth/me"),
 };

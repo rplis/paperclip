@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertCompanyAccess } from "../routes/authz.js";
+import { assertBoardOrgAccess, assertCompanyAccess, hasBoardOrgAccess } from "../routes/authz.js";
 
 function makeReq(input: {
   method?: string;
@@ -74,5 +74,55 @@ describe("assertCompanyAccess", () => {
     });
 
     expect(() => assertCompanyAccess(req, "company-1")).not.toThrow();
+  });
+});
+
+describe("assertBoardOrgAccess", () => {
+  it("allows signed-in board users with active company access", () => {
+    const req = makeReq({
+      actor: {
+        type: "board",
+        userId: "user-1",
+        source: "session",
+        companyIds: ["company-1"],
+        memberships: [{ companyId: "company-1", membershipRole: "operator", status: "active" }],
+        isInstanceAdmin: false,
+      },
+    });
+
+    expect(hasBoardOrgAccess(req)).toBe(true);
+    expect(() => assertBoardOrgAccess(req)).not.toThrow();
+  });
+
+  it("allows instance admins without company memberships", () => {
+    const req = makeReq({
+      actor: {
+        type: "board",
+        userId: "admin-1",
+        source: "session",
+        companyIds: [],
+        memberships: [],
+        isInstanceAdmin: true,
+      },
+    });
+
+    expect(hasBoardOrgAccess(req)).toBe(true);
+    expect(() => assertBoardOrgAccess(req)).not.toThrow();
+  });
+
+  it("rejects signed-in users without company access or instance admin rights", () => {
+    const req = makeReq({
+      actor: {
+        type: "board",
+        userId: "outsider-1",
+        source: "session",
+        companyIds: [],
+        memberships: [],
+        isInstanceAdmin: false,
+      },
+    });
+
+    expect(hasBoardOrgAccess(req)).toBe(false);
+    expect(() => assertBoardOrgAccess(req)).toThrow("Company membership or instance admin access required");
   });
 });
