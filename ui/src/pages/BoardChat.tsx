@@ -165,14 +165,15 @@ export function BoardChat() {
    *  has arrived they can't see. Drives the floating "jump to latest" chip. */
   const [hasNewBelow, setHasNewBelow] = useState(false);
 
-  const isNearBottom = useCallback((threshold = 80) => {
-    const c = scrollContainerRef.current;
-    if (!c) return true;
-    return c.scrollHeight - c.scrollTop - c.clientHeight <= threshold;
-  }, []);
+  /** Tracks whether the user was near the bottom BEFORE the latest content
+   *  change. Updated on scroll events (and after programmatic scrolls) so
+   *  that when a tall new message inflates scrollHeight, we still know the
+   *  user's pre-update position and can decide whether to auto-scroll. */
+  const wasNearBottomRef = useRef(true);
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    wasNearBottomRef.current = true;
     setHasNewBelow(false);
   }, []);
 
@@ -379,24 +380,27 @@ export function BoardChat() {
   }, [optimisticMessage, scrollToLatest]);
 
   // Agent activity (new persisted comment, streaming chunks, status):
-  // auto-scroll only if the user is already near the bottom. Otherwise
-  // raise the "new below" flag so the floating jump button appears.
+  // auto-scroll only if the user was near the bottom BEFORE the new content
+  // arrived. Using the ref (updated on scroll events) instead of measuring
+  // after the render, because the new content has already grown scrollHeight
+  // by the time this effect fires — making the post-update "distance from
+  // bottom" misleading.
   useEffect(() => {
     if (!hasRestoredScrollRef.current) return;
-    if (isNearBottom()) {
+    if (wasNearBottomRef.current) {
       scrollToLatest("smooth");
     } else {
       setHasNewBelow(true);
     }
-  }, [sortedComments.length, streamingText, statusText, isNearBottom, scrollToLatest]);
+  }, [sortedComments.length, streamingText, statusText, scrollToLatest]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     let rafId: number | null = null;
     const handleScroll = () => {
-      // Clear "new below" flag when the user scrolls back near the bottom.
       const near = container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
+      wasNearBottomRef.current = near;
       if (near) setHasNewBelow(false);
 
       if (rafId != null) return;

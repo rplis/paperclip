@@ -27,6 +27,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { CompanyDropdown } from "./CompanyDropdown";
 
 export function Sidebar() {
   const { openNewIssue } = useDialog();
@@ -61,12 +62,10 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
-      {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border) */}
-      <div className="flex items-center gap-1 px-3 h-12 shrink-0">
-        <span className="flex-1 min-w-0 text-sm font-bold text-foreground truncate">
-          {selectedCompany?.name ?? "Select company"}
-        </span>
+    <aside className="w-full h-full min-h-0 border-r border-border bg-background flex flex-col">
+      {/* Top bar: Company dropdown + Search — border-b aligns with BreadcrumbBar */}
+      <div className="flex items-center gap-1 px-2 h-12 shrink-0 border-b border-border">
+        <CompanyDropdown className="flex-1 min-w-0" />
         <Button
           variant="ghost"
           size="icon-sm"

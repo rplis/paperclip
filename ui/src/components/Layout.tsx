@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, Moon, Settings, Sun } from "lucide-react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "@/lib/router";
-import { CompanyRail } from "./CompanyRail";
 import { Sidebar } from "./Sidebar";
+import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../context/SidebarContext";
 import { InstanceSidebar } from "./InstanceSidebar";
 import { BreadcrumbBar } from "./BreadcrumbBar";
 import { PropertiesPanel } from "./PropertiesPanel";
@@ -49,7 +49,56 @@ function readRememberedInstanceSettingsPath(): string {
 }
 
 export function Layout() {
-  const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
+  const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile, sidebarWidth, setSidebarWidth } = useSidebar();
+  const sidebarResizing = useRef(false);
+  const docsLinkRef = useRef<HTMLAnchorElement>(null);
+  const docsMeasureRef = useRef<HTMLSpanElement>(null);
+  const [docsLabel, setDocsLabel] = useState<"Documentation" | "Docs">("Documentation");
+  useEffect(() => {
+    const link = docsLinkRef.current;
+    const measure = docsMeasureRef.current;
+    if (!link || !measure) return;
+    const compute = () => {
+      const natural = measure.offsetWidth;
+      // Link padding (px-3 = 24px) + icon (16px) + gap-2.5 (10px) = 50px reserved.
+      const available = link.clientWidth - 50;
+      setDocsLabel(natural > 0 && natural <= available ? "Documentation" : "Docs");
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(link);
+    return () => ro.disconnect();
+  }, [sidebarWidth]);
+  const handleSidebarResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      if (isMobile) return;
+      e.preventDefault();
+      sidebarResizing.current = true;
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!sidebarResizing.current) return;
+        const next = startWidth + (ev.clientX - startX);
+        const clamped = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, next));
+        setSidebarWidth(clamped);
+      };
+
+      const onMouseUp = () => {
+        sidebarResizing.current = false;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [isMobile, sidebarWidth, setSidebarWidth],
+  );
   const { openNewIssue, openOnboarding } = useDialog();
   const { togglePanelVisible } = usePanel();
   const {
@@ -299,7 +348,6 @@ export function Layout() {
             )}
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <CompanyRail />
               {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
             </div>
             <div className="border-t border-r border-border px-3 py-3 bg-background">
@@ -348,28 +396,31 @@ export function Layout() {
             </div>
           </div>
         ) : (
-          <div className="flex h-full flex-col shrink-0">
+          <div
+            className="relative flex h-full flex-col shrink-0 overflow-hidden"
+            style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+          >
             <div className="flex flex-1 min-h-0">
-              <CompanyRail />
-              <div
-                className={cn(
-                  "overflow-hidden transition-[width] duration-100 ease-out",
-                  sidebarOpen ? "w-60" : "w-0"
-                )}
-              >
-                {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
-              </div>
+              {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
             </div>
             <div className="border-t border-r border-border px-3 py-3">
               <div className="flex items-center gap-1">
                 <a
+                  ref={docsLinkRef}
                   href="https://docs.paperclip.ing/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors text-foreground/80 hover:bg-accent/50 hover:text-foreground flex-1 min-w-0"
+                  className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors text-foreground/80 hover:bg-accent/50 hover:text-foreground flex-1 min-w-0 relative"
                 >
                   <BookOpen className="h-4 w-4 shrink-0" />
-                  <span className="truncate">Documentation</span>
+                  <span className="truncate">{docsLabel}</span>
+                  <span
+                    ref={docsMeasureRef}
+                    aria-hidden
+                    className="invisible absolute left-0 top-0 whitespace-nowrap pointer-events-none"
+                  >
+                    Documentation
+                  </span>
                 </a>
                 {health?.version && (
                   <Tooltip>
@@ -404,6 +455,20 @@ export function Layout() {
                 </Button>
               </div>
             </div>
+            {sidebarOpen && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize sidebar"
+                className="group absolute inset-y-0 right-0 w-2 cursor-col-resize z-10"
+                onMouseDown={handleSidebarResizeStart}
+              >
+                <div
+                  className="pointer-events-none absolute inset-y-0 right-0 w-px bg-transparent transition-colors group-hover:bg-foreground/20"
+                  aria-hidden
+                />
+              </div>
+            )}
           </div>
         )}
 

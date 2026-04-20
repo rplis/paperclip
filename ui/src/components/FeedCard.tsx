@@ -11,116 +11,135 @@ import {
   Package,
   User,
   Settings,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  PencilLine,
+  PauseCircle,
+  PlayCircle,
+  MessageCircle,
+  LogIn,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
+/*  Canonical verb table — one verb per action, used on every card.    */
 /* ------------------------------------------------------------------ */
 
-/** Tier 1 "verb phrase" — short label after "{Actor}" on the meta line. */
-function actionLabel(action: string, details?: Record<string, unknown> | null): string {
+type VerbContext = "pinned" | "chronological";
+
+function humanize(value: unknown): string {
+  return typeof value === "string" ? value.replace(/_/g, " ") : String(value ?? "");
+}
+
+/** One verb per action. Pinned context (Tier 0) swaps a couple of verbs to
+ *  emphasize that user action is needed. */
+function formatVerb(
+  action: string,
+  details: Record<string, unknown> | null | undefined,
+  context: VerbContext = "chronological",
+): string {
   switch (action) {
     case "issue.created":
-      return "created a task";
-    case "issue.document_created":
-      return "created a document";
-    case "issue.document_updated":
-      return "updated a document";
+      return "opened";
     case "issue.updated": {
-      const status = details?.status as string | undefined;
-      if (status === "in_review") return "submitted for review";
-      return "updated task";
+      const status = details?.status;
+      if (typeof status === "string") return `moved to ${humanize(status)}`;
+      const priority = details?.priority;
+      if (typeof priority === "string") return `set priority to ${humanize(priority)} on`;
+      return "updated";
     }
+    case "issue.document_created":
+      return "wrote doc on";
+    case "issue.document_updated":
+      return "edited doc on";
+    case "issue.document_deleted":
+      return "deleted doc from";
+    case "issue.work_product_created":
+      return "delivered work on";
+    case "issue.work_product_updated":
+      return "updated work on";
+    case "issue.work_product_deleted":
+      return "removed work from";
+    case "issue.checked_out":
+      return "picked up";
+    case "issue.released":
+      return "released";
+    case "issue.commented":
+    case "issue.comment_added":
+      return "commented on";
+    case "issue.attachment_added":
+      return "attached a file to";
+    case "issue.attachment_removed":
+      return "removed attachment from";
+    case "issue.deleted":
+      return "deleted";
+
     case "approval.created":
-      return "submitted for approval";
+      return context === "pinned" ? "needs approval on" : "requested approval on";
     case "approval.approved":
       return "approved";
     case "approval.rejected":
-      return "requested changes";
-    case "issue.work_product_created":
-      return "delivered a work product";
+      return "rejected";
+    case "approval.revision_requested":
+      return "requested changes on";
+
     case "agent.created":
-      return "new agent created";
+      return context === "pinned" ? "wants to hire" : "hired";
+    case "agent.paused":
+      return "paused";
+    case "agent.resumed":
+      return "resumed";
+    case "agent.updated":
+      return "updated";
+    case "agent.terminated":
+      return "terminated";
+
+    case "heartbeat.invoked":
+      return "started a run on";
+    case "heartbeat.cancelled":
+      return "cancelled a run on";
+
+    case "project.created":
+      return "created project";
+    case "project.updated":
+      return "updated project";
+    case "project.deleted":
+      return "deleted project";
+    case "goal.created":
+      return "created goal";
+    case "goal.updated":
+      return "updated goal";
+    case "goal.deleted":
+      return "deleted goal";
+    case "company.created":
+      return "created company";
+    case "company.updated":
+      return "updated company";
+    case "company.archived":
+      return "archived company";
+    case "company.budget_updated":
+      return "updated company budget";
+
     default:
       return action.replace(/[._]/g, " ");
   }
 }
 
-/** Tier 2 verbs — read inline with the object name ("paused CTO Agent"). */
-const ACTION_VERBS: Record<string, string> = {
-  "issue.created": "created",
-  "issue.updated": "updated",
-  "issue.checked_out": "checked out",
-  "issue.released": "released",
-  "issue.comment_added": "commented on",
-  "issue.attachment_added": "attached file to",
-  "issue.attachment_removed": "removed attachment from",
-  "issue.document_created": "created document for",
-  "issue.document_updated": "updated document on",
-  "issue.document_deleted": "deleted document from",
-  "issue.commented": "commented on",
-  "issue.deleted": "deleted",
-  "issue.work_product_updated": "updated work product on",
-  "issue.work_product_deleted": "deleted work product from",
-  "agent.created": "created",
-  "agent.updated": "updated",
-  "agent.paused": "paused",
-  "agent.resumed": "resumed",
-  "agent.terminated": "terminated",
-  "agent.key_created": "created API key for",
-  "agent.budget_updated": "updated budget for",
-  "agent.runtime_session_reset": "reset session for",
-  "heartbeat.invoked": "invoked heartbeat for",
-  "heartbeat.cancelled": "cancelled heartbeat for",
-  "approval.created": "requested approval",
-  "approval.approved": "approved",
-  "approval.rejected": "rejected",
-  "project.created": "created",
-  "project.updated": "updated",
-  "project.deleted": "deleted",
-  "goal.created": "created",
-  "goal.updated": "updated",
-  "goal.deleted": "deleted",
-  "cost.reported": "reported cost for",
-  "cost.recorded": "recorded cost for",
-  "company.created": "created company",
-  "company.updated": "updated company",
-  "company.archived": "archived",
-  "company.budget_updated": "updated budget for",
-};
+/* ------------------------------------------------------------------ */
+/*  Event-time task status (for issue events without a lifecycle wrap) */
+/* ------------------------------------------------------------------ */
 
-function humanizeValue(value: unknown): string {
-  if (typeof value !== "string") return String(value ?? "none");
-  return value.replace(/_/g, " ");
-}
-
-function formatVerb(action: string, details?: Record<string, unknown> | null): string {
-  if (action === "issue.updated" && details) {
-    const previous = (details._previous ?? {}) as Record<string, unknown>;
-    if (details.status !== undefined) {
-      const from = previous.status;
-      return from
-        ? `changed status from ${humanizeValue(from)} to ${humanizeValue(details.status)} on`
-        : `changed status to ${humanizeValue(details.status)} on`;
-    }
-    if (details.priority !== undefined) {
-      const from = previous.priority;
-      return from
-        ? `changed priority from ${humanizeValue(from)} to ${humanizeValue(details.priority)} on`
-        : `changed priority to ${humanizeValue(details.priority)} on`;
-    }
-  }
-  return ACTION_VERBS[action] ?? action.replace(/[._]/g, " ");
-}
-
-/** Map action → task status for the Tier 1 status circle indicator */
-function deriveTaskStatus(action: string, details?: Record<string, unknown> | null): string | null {
+function deriveTaskStatus(
+  action: string,
+  details: Record<string, unknown> | null | undefined,
+): string | null {
   switch (action) {
     case "issue.created":
       return "todo";
     case "issue.updated": {
-      const status = details?.status as string | undefined;
-      return status ?? null;
+      const status = details?.status;
+      return typeof status === "string" ? status : null;
     }
     case "issue.document_created":
     case "issue.document_updated":
@@ -132,59 +151,227 @@ function deriveTaskStatus(action: string, details?: Record<string, unknown> | nu
     case "approval.approved":
       return "done";
     case "approval.rejected":
+    case "approval.revision_requested":
       return "blocked";
     default:
       return null;
   }
 }
 
-function entityLink(entityType: string, entityId: string, name?: string | null): string | null {
-  switch (entityType) {
-    case "issue": return `/issues/${name ?? entityId}`;
-    case "agent": return `/agents/${entityId}`;
-    case "project": return `/projects/${deriveProjectUrlKey(name, entityId)}`;
-    case "goal": return `/goals/${entityId}`;
-    case "approval": return `/approvals/${entityId}`;
-    default: return null;
+/* ------------------------------------------------------------------ */
+/*  Leading icon — carries entity type AND state via color/shape.      */
+/* ------------------------------------------------------------------ */
+
+type IconSpec =
+  | { kind: "lucide"; Icon: LucideIcon; color: string; filled?: boolean; spin?: boolean }
+  | { kind: "status-circle"; status: string };
+
+function getIconSpec(
+  event: ActivityEvent,
+  details: Record<string, unknown> | null | undefined,
+  isActive: boolean,
+): IconSpec {
+  const action = event.action;
+
+  // Heartbeat — animated when active, static otherwise
+  if (action.startsWith("heartbeat.")) {
+    if (isActive && action === "heartbeat.invoked") {
+      return { kind: "lucide", Icon: Loader2, color: "text-cyan-600 dark:text-cyan-400", spin: true };
+    }
+    return { kind: "lucide", Icon: Loader2, color: "text-muted-foreground" };
   }
+
+  // Approval
+  switch (action) {
+    case "approval.created":
+      return { kind: "lucide", Icon: Clock, color: "text-amber-600 dark:text-amber-400", filled: true };
+    case "approval.approved":
+      return { kind: "lucide", Icon: CheckCircle2, color: "text-green-600 dark:text-green-400", filled: true };
+    case "approval.rejected":
+      return { kind: "lucide", Icon: XCircle, color: "text-red-600 dark:text-red-400", filled: true };
+    case "approval.revision_requested":
+      return { kind: "lucide", Icon: PencilLine, color: "text-amber-600 dark:text-amber-400", filled: true };
+  }
+
+  // Agent
+  switch (action) {
+    case "agent.created":
+      return { kind: "lucide", Icon: UserPlus, color: "text-purple-600 dark:text-purple-400" };
+    case "agent.paused":
+      return { kind: "lucide", Icon: PauseCircle, color: "text-muted-foreground" };
+    case "agent.resumed":
+      return { kind: "lucide", Icon: PlayCircle, color: "text-muted-foreground" };
+    case "agent.updated":
+    case "agent.terminated":
+      return { kind: "lucide", Icon: Settings, color: "text-muted-foreground" };
+  }
+
+  // Document on issue
+  if (action === "issue.document_created" || action === "issue.document_updated") {
+    return { kind: "lucide", Icon: FileText, color: "text-blue-600 dark:text-blue-400" };
+  }
+
+  // Work product / artifact on issue
+  if (action.startsWith("issue.work_product_")) {
+    return { kind: "lucide", Icon: Package, color: "text-indigo-600 dark:text-indigo-400" };
+  }
+
+  // Comments
+  if (action === "issue.commented" || action === "issue.comment_added") {
+    return { kind: "lucide", Icon: MessageCircle, color: "text-muted-foreground" };
+  }
+
+  // Issue check-out
+  if (action === "issue.checked_out") {
+    return { kind: "lucide", Icon: LogIn, color: "text-muted-foreground" };
+  }
+
+  // Generic issue lifecycle → StatusCircle with event-derived status
+  if (event.entityType === "issue") {
+    const status = deriveTaskStatus(action, details) ?? "backlog";
+    return { kind: "status-circle", status };
+  }
+
+  return { kind: "lucide", Icon: Settings, color: "text-muted-foreground" };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Status Circle — matches StatusIcon rendering                       */
-/* ------------------------------------------------------------------ */
-
-function StatusCircle({ status, className }: { status: string; className?: string }) {
+function StatusCircle({ status }: { status: string }) {
   const colorClass = issueStatusIcon[status] ?? issueStatusIconDefault;
+  const isFilled = status === "done";
   return (
-    <span className={cn("relative inline-flex h-4 w-4 rounded-full border-2 shrink-0", colorClass, className)}>
-      {status === "done" && (
-        <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
-      )}
+    <span className={cn("relative inline-flex h-4 w-4 shrink-0 rounded-full border-2", colorClass)}>
+      {isFilled && <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />}
     </span>
   );
 }
 
+function EntityIcon({ spec }: { spec: IconSpec }) {
+  if (spec.kind === "status-circle") {
+    return <StatusCircle status={spec.status} />;
+  }
+  const { Icon, color, filled, spin } = spec;
+  return (
+    <Icon
+      className={cn("h-4 w-4 shrink-0", color, spin && "animate-spin")}
+      fill={filled ? "currentColor" : "none"}
+      strokeWidth={filled ? 1.5 : 2}
+    />
+  );
+}
+
 /* ------------------------------------------------------------------ */
-/*  Actor Icon                                                         */
+/*  Content resolution — identifier (mono) + title                     */
 /* ------------------------------------------------------------------ */
 
-function ActorIcon({
-  event,
-  agentMap,
-  overrideAgent,
-}: {
-  event: ActivityEvent;
-  agentMap: Map<string, Agent>;
-  overrideAgent?: Agent | null;
-}) {
-  if (overrideAgent) {
-    return <AgentIcon icon={overrideAgent.icon ?? null} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+interface CardContent {
+  actorName: string;
+  actorType: ActivityEvent["actorType"];
+  actor: Agent | null;
+  identifier: string | null;
+  title: string | null;
+  link: string | null;
+}
+
+function resolveContent(
+  event: ActivityEvent,
+  agentMap: Map<string, Agent>,
+  entityNameMap: Map<string, string>,
+  entityTitleMap: Map<string, string> | undefined,
+): CardContent {
+  const details = event.details as Record<string, unknown> | null;
+  const actor = event.actorType === "agent" ? agentMap.get(event.actorId) ?? null : null;
+  const actorName =
+    actor?.name ??
+    (event.actorType === "system"
+      ? "System"
+      : event.actorType === "user"
+        ? "Board"
+        : event.actorId || "Unknown");
+
+  const entityTitle = entityTitleMap?.get(`${event.entityType}:${event.entityId}`) ?? null;
+
+  const isHeartbeatEvent = event.entityType === "heartbeat_run";
+  const heartbeatAgentId = isHeartbeatEvent
+    ? (details?.agentId as string | undefined)
+    : undefined;
+  const entityName = isHeartbeatEvent
+    ? heartbeatAgentId
+      ? entityNameMap.get(`agent:${heartbeatAgentId}`) ?? null
+      : null
+    : entityNameMap.get(`${event.entityType}:${event.entityId}`) ?? null;
+
+  const docKey = details?.key as string | undefined;
+  const isDocEvent =
+    event.action === "issue.document_created" || event.action === "issue.document_updated";
+  const issueSlug = entityName ?? event.entityId;
+  const hiredAgentId = details?.hiredAgentId as string | undefined;
+  const approvalAgentId = details?.requestedByAgentId as string | undefined;
+  const approvalAgentName = approvalAgentId ? agentMap.get(approvalAgentId)?.name ?? null : null;
+  const approvalType = details?.type as string | undefined;
+
+  const link = isHeartbeatEvent && heartbeatAgentId
+    ? `/agents/${heartbeatAgentId}/runs/${event.entityId}`
+    : event.entityType === "issue"
+      ? isDocEvent && docKey
+        ? `/issues/${issueSlug}#document-${encodeURIComponent(docKey)}`
+        : `/issues/${issueSlug}`
+      : event.entityType === "agent"
+        ? `/agents/${event.entityId}`
+        : event.entityType === "approval"
+          ? event.action === "approval.approved" && hiredAgentId
+            ? `/agents/${hiredAgentId}`
+            : `/approvals/${event.entityId}`
+          : event.entityType === "project"
+            ? `/projects/${deriveProjectUrlKey(entityName, event.entityId)}`
+            : event.entityType === "goal"
+              ? `/goals/${event.entityId}`
+              : null;
+
+  let identifier: string | null = null;
+  let title: string | null = null;
+
+  if (event.entityType === "issue") {
+    if (isDocEvent && docKey) {
+      identifier = `${entityName ?? event.entityId}#${docKey}`;
+      title = entityTitle;
+    } else {
+      identifier = entityName;
+      title = entityTitle;
+    }
+  } else if (event.entityType === "approval") {
+    identifier = approvalAgentName ?? (approvalType ? humanize(approvalType) : "approval");
+    title = entityTitle;
+  } else if (event.entityType === "agent") {
+    identifier = (details?.name as string | undefined) ?? entityName ?? event.entityId;
+    title = null;
+  } else if (isHeartbeatEvent) {
+    identifier = entityName;
+    title = null;
+  } else {
+    identifier = entityName;
+    title = entityTitle;
   }
-  if (event.actorType === "agent") {
-    const agent = agentMap.get(event.actorId);
-    return <AgentIcon icon={agent?.icon ?? null} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+
+  return {
+    actorName,
+    actorType: event.actorType,
+    actor,
+    identifier,
+    title,
+    link,
+  };
+}
+
+function ActorGlyph({ content }: { content: CardContent }) {
+  if (content.actorType === "agent") {
+    return (
+      <AgentIcon
+        icon={content.actor?.icon ?? null}
+        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+      />
+    );
   }
-  if (event.actorType === "user") {
+  if (content.actorType === "user") {
     return <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
   }
   return <Settings className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
@@ -199,10 +386,17 @@ interface FeedCardProps {
   agentMap: Map<string, Agent>;
   entityNameMap: Map<string, string>;
   entityTitleMap?: Map<string, string>;
+  /** Retained for call-site compatibility; no longer read — the collapsed
+   *  card always shows the event-derived status. Lifecycle aggregation (a
+   *  later pass) will pass the live status through its own wrapper. */
   entityStatusMap?: Map<string, string>;
   isActive?: boolean;
-  /** 1 = two-line rich card (default). 2 = one-line compact card. */
-  tier?: 1 | 2;
+  /** Tier 2 treatment: mutes the verb and title text. Actor name and
+   *  timestamp retain their color; leading icon retains its color. */
+  isMuted?: boolean;
+  /** Tier 0 treatment: adds a trailing "Review →" affordance and swaps in
+   *  pinned-context verb phrasing ("needs approval on", "wants to hire"). */
+  isPinned?: boolean;
   className?: string;
 }
 
@@ -211,199 +405,54 @@ export function FeedCard({
   agentMap,
   entityNameMap,
   entityTitleMap,
-  entityStatusMap,
-  isActive,
-  tier = 1,
+  isActive = false,
+  isMuted = false,
+  isPinned = false,
   className,
 }: FeedCardProps) {
-  const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
   const details = event.details as Record<string, unknown> | null;
-  const entityTitle = entityTitleMap?.get(`${event.entityType}:${event.entityId}`);
+  const content = resolveContent(event, agentMap, entityNameMap, entityTitleMap);
+  const verb = formatVerb(event.action, details, isPinned ? "pinned" : "chronological");
+  const iconSpec = getIconSpec(event, details, isActive);
 
-  // Attribution override: the Board concierge chat runs as the user, so any
-  // documents it drafts inside a Conference Room conversation get logged
-  // with actorType="user" ("Board"). Re-attribute those to the CEO agent
-  // so the feed reads naturally.
-  const isBoardOpsDocEvent =
-    event.entityType === "issue" &&
-    event.actorType === "user" &&
-    (event.action === "issue.document_created" ||
-      event.action === "issue.document_updated") &&
-    entityTitle === "Board Operations";
-  const ceoOverride: Agent | null = isBoardOpsDocEvent
-    ? Array.from(agentMap.values()).find(
-        (a) => a.role === "ceo" && a.status !== "terminated",
-      ) ?? null
-    : null;
-
-  const displayActor = ceoOverride ?? actor;
-  const actorName = displayActor?.name
-    ?? (event.actorType === "system" ? "System"
-      : event.actorType === "user" ? "Board"
-      : event.actorId || "Unknown");
-
-  // Heartbeat events live on `heartbeat_run` with agentId in details —
-  // resolve the display name from the agent, and link to the run page.
-  const isHeartbeatEvent = event.entityType === "heartbeat_run";
-  const heartbeatAgentId = isHeartbeatEvent
-    ? (details?.agentId as string | undefined)
-    : undefined;
-
-  const entityName = isHeartbeatEvent
-    ? (heartbeatAgentId ? entityNameMap.get(`agent:${heartbeatAgentId}`) : undefined)
-    : entityNameMap.get(`${event.entityType}:${event.entityId}`);
-
-  /* ---------------- Link resolution ---------------- */
-
-  const docKey = details?.key as string | undefined;
-  const summary = details?.summary as string | undefined;
-  const isDocEvent =
-    event.action === "issue.document_created" || event.action === "issue.document_updated";
-  const issueSlug = entityName ?? event.entityId;
-  const hiredAgentId = details?.hiredAgentId as string | undefined;
-  const approvalLink =
-    event.action === "approval.approved" && hiredAgentId
-      ? `/agents/${hiredAgentId}`
-      : `/approvals/${event.entityId}`;
-
-  const link = isHeartbeatEvent && heartbeatAgentId
-    ? `/agents/${heartbeatAgentId}/runs/${event.entityId}`
-    : event.entityType === "issue"
-      ? isDocEvent && docKey
-        ? `/issues/${issueSlug}#document-${encodeURIComponent(docKey)}`
-        : `/issues/${issueSlug}`
-      : event.entityType === "agent"
-        ? `/agents/${event.entityId}`
-        : event.entityType === "approval"
-          ? approvalLink
-          : entityLink(event.entityType, event.entityId, entityName);
-
-  /* ---------------- Shared shell classes ---------------- */
-
-  const shellBase =
-    "mx-3 rounded-lg border bg-card transition-[background-color,border-color,transform] duration-150";
-  const hoverClasses = link
-    ? "cursor-pointer hover:bg-accent hover:border-muted-foreground/30 hover:-translate-y-px"
-    : "";
-
-  const wrap = (cardContent: React.ReactNode) => {
-    if (link) {
-      return (
-        <Link to={link} className="no-underline text-inherit block">
-          {cardContent}
-        </Link>
-      );
-    }
-    return cardContent;
-  };
-
-  /* ---------------- Tier 2 render ---------------- */
-
-  if (tier === 2) {
-    const verb = formatVerb(event.action, details);
-    const card = (
-      <div className={cn(shellBase, "my-1.5 px-3 py-1.5 text-xs", hoverClasses, className)}>
-        <div className="flex items-center gap-2 min-w-0">
-          <ActorIcon event={event} agentMap={agentMap} overrideAgent={ceoOverride} />
-          <span className="flex-1 min-w-0 truncate text-muted-foreground">
-            <span className="font-medium text-foreground">{actorName}</span>
-            <span className="ml-1">{verb}</span>
-            {entityName && <span className="ml-1">{entityName}</span>}
-            {entityTitle && <span className="ml-1">— {entityTitle}</span>}
-          </span>
-          {isActive && <Loader2 className="h-3 w-3 shrink-0 text-amber-500 animate-spin" />}
-          <span className="font-mono text-muted-foreground shrink-0">
-            {timeAgo(event.createdAt)}
-          </span>
-        </div>
-      </div>
-    );
-    return wrap(card);
-  }
-
-  /* ---------------- Tier 1 render ---------------- */
-
-  // Approval display context
-  const isApprovalEvent = event.entityType === "approval";
-  const approvalAgentId = details?.requestedByAgentId as string | undefined;
-  const approvalAgentName = approvalAgentId ? agentMap.get(approvalAgentId)?.name : undefined;
-
-  const eventStatus = deriveTaskStatus(event.action, details);
-  const currentStatus = entityStatusMap?.get(`${event.entityType}:${event.entityId}`) ?? null;
-  const taskStatus = currentStatus ?? eventStatus;
-  const isAgentEvent = event.action === "agent.created";
-  const isWorkProductEvent = event.action === "issue.work_product_created";
-
-  const approvalType = details?.type as string | undefined;
-  const approvalFallbackTitle =
-    approvalType === "agent_hire"
-      ? "Agent hire"
-      : approvalType
-        ? `Approval · ${approvalType}`
-        : "Approval request";
-
-  // Identifier line content. For issue events, prefer "{slug} {title}" so the
-  // mono line reads like a concrete identifier (e.g. "FAM-4 Write AGENTS.md").
-  const isIssueEvent = event.entityType === "issue";
-  const identifierText = isAgentEvent
-    ? (details?.name as string | undefined) ?? entityName ?? event.entityId
-    : isApprovalEvent
-      ? approvalAgentName ?? entityTitle ?? entityName ?? approvalFallbackTitle
-      : isDocEvent && docKey
-        ? docKey
-        : isIssueEvent && entityName && entityTitle
-          ? `${entityName} ${entityTitle}`
-          : entityTitle ?? entityName ?? event.entityId;
-
-  const renderStatusIndicator = () => {
-    if (isActive) {
-      return <Loader2 className="h-4 w-4 shrink-0 text-amber-500 animate-spin" />;
-    }
-    if (isAgentEvent) {
-      return <UserPlus className="h-4 w-4 shrink-0 text-purple-500" />;
-    }
-    if (isDocEvent) {
-      return <FileText className="h-4 w-4 shrink-0 text-blue-500" />;
-    }
-    if (isWorkProductEvent) {
-      return <Package className="h-4 w-4 shrink-0 text-indigo-500" />;
-    }
-    if (taskStatus) {
-      return <StatusCircle status={taskStatus} />;
-    }
-    return <StatusCircle status="backlog" />;
-  };
+  const textColor = isMuted ? "text-muted-foreground" : "text-foreground";
 
   const card = (
-    <div className={cn(shellBase, "my-2 p-3 text-xs", hoverClasses, className)}>
-      {/* Meta line: actor icon + name + verb + timestamp */}
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <ActorIcon event={event} agentMap={agentMap} overrideAgent={ceoOverride} />
-          <span className="text-xs font-medium truncate text-muted-foreground">{actorName}</span>
-          <span className="text-muted-foreground truncate text-xs">
-            {actionLabel(event.action, details)}
-          </span>
-        </div>
-        <span className="font-mono text-xs text-muted-foreground shrink-0">
-          {timeAgo(event.createdAt)}
-        </span>
-      </div>
-
-      {/* Identifier line: status glyph + mono identifier */}
-      <div className="flex items-center gap-2 font-mono text-sm text-foreground">
-        {renderStatusIndicator()}
-        <span className="truncate">{identifierText}</span>
-      </div>
-
-      {/* Optional summary (Inter, muted) */}
-      {summary && (
-        <p className="mt-1.5 text-xs text-muted-foreground line-clamp-2">
-          {summary}
-        </p>
+    <div
+      className={cn(
+        "mx-3 my-1 flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs",
+        "transition-[background-color,border-color,transform] duration-150",
+        content.link && "cursor-pointer hover:bg-accent hover:border-muted-foreground/30 hover:-translate-y-px",
+        className,
       )}
+    >
+      <EntityIcon spec={iconSpec} />
+      <ActorGlyph content={content} />
+      <span className="flex min-w-0 flex-1 items-baseline gap-1 truncate">
+        <span className="font-medium text-foreground">{content.actorName}</span>
+        <span className={textColor}>{verb}</span>
+        {content.identifier && (
+          <span className={cn("font-mono", textColor)}>{content.identifier}</span>
+        )}
+        {content.title && (
+          <span className="truncate text-muted-foreground">{content.title}</span>
+        )}
+      </span>
+      {isPinned && (
+        <span className="shrink-0 text-xs text-muted-foreground">Review →</span>
+      )}
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+        {timeAgo(event.createdAt)}
+      </span>
     </div>
   );
 
-  return wrap(card);
+  if (content.link) {
+    return (
+      <Link to={content.link} className="block no-underline text-inherit">
+        {card}
+      </Link>
+    );
+  }
+  return card;
 }

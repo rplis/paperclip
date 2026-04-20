@@ -41,6 +41,7 @@ const ACTION_TIER: Record<string, EventTier> = {
   "approval.created": 1,
   "approval.approved": 1,
   "approval.rejected": 1,
+  "approval.revision_requested": 1,
   "agent.created": 1,
 
   "issue.work_product_created": 1,
@@ -75,6 +76,8 @@ const ACTION_TIER: Record<string, EventTier> = {
   "agent.runtime_session_reset": 3,
   "agent.skills_synced": 3,
   "agent.terminated": 2,
+  "approval.requester_wakeup_queued": 3,
+  "approval.requester_wakeup_failed": 3,
   "company.created": 3,
   "company.updated": 3,
   "company.archived": 3,
@@ -296,7 +299,7 @@ function CollapsedFeedGroup({
               agentMap={agentMap}
               entityNameMap={entityNameMap}
               entityTitleMap={entityTitleMap}
-              tier={2}
+              isMuted
             />
           ))}
         </div>
@@ -527,7 +530,7 @@ export function ActivityFeed({ className }: ActivityFeedProps) {
             entityTitleMap={entityTitleMap}
             entityStatusMap={entityStatusMap}
             isActive={isActiveHeartbeat}
-            tier={2}
+            isMuted
           />
         </div>
       </div>
