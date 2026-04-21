@@ -157,6 +157,7 @@ export type IssueThreadInteractionStatus = (typeof ISSUE_THREAD_INTERACTION_STAT
 export const ISSUE_THREAD_INTERACTION_CONTINUATION_POLICIES = [
   "none",
   "wake_assignee",
+  "wake_assignee_on_accept",
 ] as const;
 export type IssueThreadInteractionContinuationPolicy =
   (typeof ISSUE_THREAD_INTERACTION_CONTINUATION_POLICIES)[number];

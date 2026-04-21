@@ -315,7 +315,17 @@ export const askUserQuestionsResultSchema = z.object({
   summaryMarkdown: z.string().max(20000).nullable().optional(),
 });
 
-export const requestConfirmationIssueDocumentTargetSchema = z.object({
+const requestConfirmationHrefSchema = z.string().trim().min(1).max(2000).refine((value) => {
+  const lower = value.toLowerCase();
+  return !lower.startsWith("javascript:") && !lower.startsWith("data:");
+}, "href must not use javascript: or data: URLs");
+
+const requestConfirmationTargetBaseSchema = z.object({
+  label: z.string().trim().min(1).max(120).nullable().optional(),
+  href: requestConfirmationHrefSchema.nullable().optional(),
+});
+
+export const requestConfirmationIssueDocumentTargetSchema = requestConfirmationTargetBaseSchema.extend({
   type: z.literal("issue_document"),
   issueId: z.string().uuid().nullable().optional(),
   documentId: z.string().uuid().nullable().optional(),
@@ -324,8 +334,16 @@ export const requestConfirmationIssueDocumentTargetSchema = z.object({
   revisionNumber: z.number().int().positive().nullable().optional(),
 });
 
+export const requestConfirmationCustomTargetSchema = requestConfirmationTargetBaseSchema.extend({
+  type: z.literal("custom"),
+  key: z.string().trim().min(1).max(120),
+  revisionId: z.string().trim().min(1).max(255).nullable().optional(),
+  revisionNumber: z.number().int().positive().nullable().optional(),
+});
+
 export const requestConfirmationTargetSchema = z.discriminatedUnion("type", [
   requestConfirmationIssueDocumentTargetSchema,
+  requestConfirmationCustomTargetSchema,
 ]);
 
 export const requestConfirmationPayloadSchema = z.object({
@@ -335,6 +353,8 @@ export const requestConfirmationPayloadSchema = z.object({
   rejectLabel: z.string().trim().min(1).max(80).nullable().optional(),
   rejectRequiresReason: z.boolean().optional(),
   rejectReasonLabel: z.string().trim().min(1).max(160).nullable().optional(),
+  allowDeclineReason: z.boolean().optional().default(true),
+  declineReasonPlaceholder: z.string().trim().min(1).max(240).nullable().optional(),
   detailsMarkdown: z.string().max(20000).nullable().optional(),
   supersedeOnUserComment: z.boolean().optional(),
   target: requestConfirmationTargetSchema.nullable().optional(),

@@ -12,6 +12,7 @@ describe("issue thread interaction schemas", () => {
         rejectLabel: "Revise",
         rejectRequiresReason: true,
         rejectReasonLabel: "What needs to change?",
+        declineReasonPlaceholder: "Optional: tell the agent what you'd change.",
         detailsMarkdown: "The current plan document will be accepted as-is.",
         supersedeOnUserComment: true,
       },
@@ -26,6 +27,8 @@ describe("issue thread interaction schemas", () => {
         rejectLabel: "Revise",
         rejectRequiresReason: true,
         rejectReasonLabel: "What needs to change?",
+        allowDeclineReason: true,
+        declineReasonPlaceholder: "Optional: tell the agent what you'd change.",
         supersedeOnUserComment: true,
       },
     });
@@ -34,10 +37,11 @@ describe("issue thread interaction schemas", () => {
   it("accepts issue document targets for request_confirmation interactions", () => {
     const parsed = createIssueThreadInteractionSchema.parse({
       kind: "request_confirmation",
-      continuationPolicy: "wake_assignee",
+      continuationPolicy: "wake_assignee_on_accept",
       payload: {
         version: 1,
         prompt: "Accept the latest plan revision?",
+        allowDeclineReason: false,
         target: {
           type: "issue_document",
           issueId: "11111111-1111-4111-8111-111111111111",
@@ -45,6 +49,8 @@ describe("issue thread interaction schemas", () => {
           key: "plan",
           revisionId: "33333333-3333-4333-8333-333333333333",
           revisionNumber: 2,
+          label: "Plan v2",
+          href: "/issues/PAP-123#document-plan",
         },
       },
     });
@@ -55,6 +61,34 @@ describe("issue thread interaction schemas", () => {
       type: "issue_document",
       key: "plan",
       revisionNumber: 2,
+      label: "Plan v2",
+      href: "/issues/PAP-123#document-plan",
+    });
+  });
+
+  it("accepts custom targets for request_confirmation interactions", () => {
+    const parsed = createIssueThreadInteractionSchema.parse({
+      kind: "request_confirmation",
+      payload: {
+        version: 1,
+        prompt: "Proceed with the external checklist?",
+        target: {
+          type: "custom",
+          key: "external-checklist",
+          revisionId: "checklist-v1",
+          revisionNumber: 1,
+          label: "Checklist v1",
+          href: "https://example.com/checklist",
+        },
+      },
+    });
+
+    expect(parsed.kind).toBe("request_confirmation");
+    if (parsed.kind !== "request_confirmation") return;
+    expect(parsed.payload.target).toMatchObject({
+      type: "custom",
+      key: "external-checklist",
+      label: "Checklist v1",
     });
   });
 });

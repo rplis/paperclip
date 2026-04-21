@@ -360,7 +360,7 @@ describe("issue thread interaction routes", () => {
     );
   });
 
-  it("accepts request confirmations and wakes the current assignee when configured", async () => {
+  it("accepts request confirmations and wakes the current assignee when configured for accept-only wakeups", async () => {
     mockInteractionService.acceptInteraction.mockResolvedValueOnce({
       interaction: {
         id: "interaction-3",
@@ -368,7 +368,7 @@ describe("issue thread interaction routes", () => {
         issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         kind: "request_confirmation",
         status: "accepted",
-        continuationPolicy: "wake_assignee",
+        continuationPolicy: "wake_assignee_on_accept",
         idempotencyKey: null,
         sourceCommentId: null,
         sourceRunId: "run-3",
@@ -414,7 +414,7 @@ describe("issue thread interaction routes", () => {
       issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       kind: "request_confirmation",
       status: "rejected",
-      continuationPolicy: "wake_assignee",
+      continuationPolicy: "wake_assignee_on_accept",
       idempotencyKey: null,
       sourceCommentId: null,
       sourceRunId: "run-3",

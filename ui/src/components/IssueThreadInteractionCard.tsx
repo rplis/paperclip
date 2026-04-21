@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Agent } from "@paperclipai/shared";
-import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, FileText, GitBranch, ListChecks, Loader2, MessageSquareQuote, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, GitBranch, ListChecks, Loader2, MessageSquareQuote, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import {
@@ -12,6 +12,7 @@ import {
   type AskUserQuestionsInteraction,
   type IssueThreadInteraction,
   type RequestConfirmationInteraction,
+  type RequestConfirmationTarget,
   type SuggestTasksInteraction,
   type SuggestTasksResultCreatedTask,
   type SuggestedTaskDraft,
@@ -87,7 +88,7 @@ function interactionKindLabel(kind: IssueThreadInteraction["kind"]) {
     case "ask_user_questions":
       return "Ask user questions";
     case "request_confirmation":
-      return "Request confirmation";
+      return "Confirmation";
     default:
       return kind;
   }
@@ -826,32 +827,69 @@ function AskUserQuestionsCard({
   );
 }
 
-function RequestConfirmationTargetLink({
+function requestConfirmationTargetLabel(target: RequestConfirmationTarget) {
+  if (target.label) return target.label;
+  const revision = target.revisionNumber ? ` v${target.revisionNumber}` : "";
+  if (target.type === "issue_document" && target.key === "plan") {
+    return `Plan${revision}`;
+  }
+  return `${target.key}${revision}`;
+}
+
+function requestConfirmationTargetHref({
   interaction,
+  target,
 }: {
   interaction: RequestConfirmationInteraction;
+  target: RequestConfirmationTarget;
 }) {
-  const target = interaction.payload.target ?? interaction.result?.staleTarget ?? null;
-  if (!target) return null;
-
+  if (target.href) return target.href;
   if (target.type === "issue_document") {
     const issueId = target.issueId ?? interaction.issueId;
+    return `/issues/${issueId}#document-${encodeURIComponent(target.key)}`;
+  }
+  return null;
+}
+
+function RequestConfirmationTargetChip({
+  interaction,
+  target,
+  tone = "default",
+}: {
+  interaction: RequestConfirmationInteraction;
+  target: RequestConfirmationTarget | null | undefined;
+  tone?: "default" | "subtle";
+}) {
+  if (!target) return null;
+
+  const href = requestConfirmationTargetHref({ interaction, target });
+  const className = cn(
+    "inline-flex max-w-full items-center gap-1.5 rounded-sm border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]",
+    tone === "default"
+      ? "border-border/70 bg-transparent text-foreground"
+      : "border-border/60 bg-transparent text-muted-foreground",
+    href && "transition-colors hover:border-sky-500/70 hover:bg-sky-500/10",
+  );
+  const content = (
+    <>
+      <GitBranch className="h-3 w-3 shrink-0" />
+      <span className="min-w-0 truncate">{requestConfirmationTargetLabel(target)}</span>
+    </>
+  );
+
+  if (!href) return <span className={className}>{content}</span>;
+  if (/^https?:\/\//i.test(href)) {
     return (
-      <Link
-        to={`/issues/${issueId}#document-${encodeURIComponent(target.key)}`}
-        className="inline-flex items-center gap-2 rounded-sm border border-border/70 bg-transparent px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-sky-500/70 hover:bg-sky-500/10"
-      >
-        <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="min-w-0 truncate">
-          Document: {target.key}
-          {target.revisionNumber ? ` rev ${target.revisionNumber}` : ""}
-        </span>
-        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-      </Link>
+      <a href={href} target="_blank" rel="noreferrer" className={className}>
+        {content}
+      </a>
     );
   }
-
-  return null;
+  return (
+    <Link to={href} className={className}>
+      {content}
+    </Link>
+  );
 }
 
 function RequestConfirmationResolution({
@@ -860,47 +898,74 @@ function RequestConfirmationResolution({
   interaction: RequestConfirmationInteraction;
 }) {
   const outcome = interaction.result?.outcome;
+  const target = interaction.payload.target ?? null;
+  const staleTarget = interaction.result?.staleTarget ?? null;
 
   if (interaction.status === "accepted") {
     return (
-      <div className="rounded-sm border border-emerald-500/60 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-100">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
-          Confirmed
-        </div>
-        <p className="mt-1 leading-6">The request was confirmed and is now disabled in the thread.</p>
+      <div className="flex flex-wrap items-center gap-2 text-sm leading-6 text-foreground">
+        <span className="font-medium">Confirmed</span>
+        <RequestConfirmationTargetChip interaction={interaction} target={target} />
       </div>
     );
   }
 
   if (interaction.status === "rejected") {
     return (
-      <div className="rounded-sm border border-rose-500/60 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:text-rose-100">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700">
-          Declined
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm leading-6 text-foreground">
+          <span className="font-medium">Declined</span>
+          <RequestConfirmationTargetChip interaction={interaction} target={target} />
         </div>
-        <p className={cn(
-          "mt-1 leading-6",
-          !interaction.result?.reason && "text-rose-900/75",
-        )}>
-          {interaction.result?.reason || "No reason provided."}
-        </p>
+        {interaction.result?.reason ? (
+          <blockquote className="rounded-sm border-l-2 border-rose-500/70 bg-rose-500/10 px-3 py-2 text-sm leading-6 text-rose-900 dark:text-rose-100">
+            {interaction.result.reason}
+          </blockquote>
+        ) : null}
       </div>
     );
   }
 
   if (interaction.status === "expired") {
     const expiredByComment = outcome === "superseded_by_comment";
+    const expiredByTargetChange = outcome === "stale_target";
     return (
-      <div className="rounded-sm border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+      <div className="space-y-3 rounded-sm border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
           {expiredByComment ? "Expired by comment" : "Expired by target change"}
         </div>
-        <p className="mt-1 leading-6">
+        <p className="leading-6">
           {expiredByComment
             ? "A board comment superseded this confirmation before it was resolved."
             : "The requested target changed before this confirmation was resolved."}
         </p>
+        {expiredByComment && interaction.result?.commentId ? (
+          <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-amber-950 hover:bg-amber-500/15 dark:text-amber-50">
+            <a href={`#comment-${interaction.result.commentId}`}>Jump to comment</a>
+          </Button>
+        ) : null}
+        {expiredByTargetChange ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <RequestConfirmationTargetChip
+              interaction={interaction}
+              target={staleTarget}
+              tone="subtle"
+            />
+            {staleTarget && target ? (
+              <ChevronRight className="h-3.5 w-3.5 text-amber-700" />
+            ) : null}
+            <RequestConfirmationTargetChip interaction={interaction} target={target} />
+          </div>
+        ) : null}
       </div>
+    );
+  }
+
+  if (interaction.status === "failed") {
+    return (
+      <p className="text-sm leading-6 text-muted-foreground">
+        This request could not be resolved. Try again or create a new request.
+      </p>
     );
   }
 
@@ -924,13 +989,22 @@ function RequestConfirmationCard({
   const [rejecting, setRejecting] = useState(false);
   const [working, setWorking] = useState<"accept" | "reject" | null>(null);
   const [rejectReason, setRejectReason] = useState(interaction.result?.reason ?? "");
+  const [rejectAttempted, setRejectAttempted] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const rejectRequiresReason = interaction.payload.rejectRequiresReason === true;
+  const allowDeclineReason = interaction.payload.allowDeclineReason !== false;
   const trimmedRejectReason = rejectReason.trim();
   const canReject = !rejectRequiresReason || trimmedRejectReason.length > 0;
+  const declineReasonInvalid = rejectRequiresReason && !canReject;
+  const declineReasonPlaceholder =
+    interaction.payload.declineReasonPlaceholder
+    ?? (interaction.payload.acceptLabel === "Approve plan"
+      ? "Optional: what would you like revised?"
+      : "Optional: tell the agent what you'd change.");
 
   useEffect(() => {
     setRejectReason(interaction.result?.reason ?? "");
+    setRejectAttempted(false);
     setActionError(null);
     if (interaction.status !== "pending") {
       setRejecting(false);
@@ -944,22 +1018,23 @@ function RequestConfirmationCard({
     setActionError(null);
     try {
       await onAcceptInteraction(interaction);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Unable to confirm this request");
+    } catch {
+      setActionError("Try again");
     } finally {
       setWorking(null);
     }
   }
 
   async function handleReject() {
+    setRejectAttempted(true);
     if (!onRejectInteraction || !canReject) return;
     setWorking("reject");
     setActionError(null);
     try {
       await onRejectInteraction(interaction, trimmedRejectReason || undefined);
       setRejecting(false);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Unable to decline this request");
+    } catch {
+      setActionError("Try again");
     } finally {
       setWorking(null);
     }
@@ -967,23 +1042,29 @@ function RequestConfirmationCard({
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3 rounded-sm border border-border/70 bg-background/75 p-4">
-        <div className="text-sm font-semibold leading-6 text-foreground">
-          {interaction.payload.prompt}
-        </div>
-        {interaction.payload.detailsMarkdown ? (
-          <div className="border-t border-border/60 pt-3 text-sm">
-            <MarkdownBody>{interaction.payload.detailsMarkdown}</MarkdownBody>
+      {interaction.status === "pending" ? (
+        <div className="space-y-3 rounded-sm border border-border/70 bg-background/75 p-4">
+          <div className="text-sm leading-6 text-foreground">
+            {interaction.payload.prompt}
           </div>
-        ) : null}
-        <RequestConfirmationTargetLink interaction={interaction} />
-      </div>
+          {interaction.payload.detailsMarkdown ? (
+            <div className="border-t border-border/60 pt-3 text-sm">
+              <MarkdownBody>{interaction.payload.detailsMarkdown}</MarkdownBody>
+            </div>
+          ) : null}
+          <RequestConfirmationTargetChip
+            interaction={interaction}
+            target={interaction.payload.target}
+          />
+        </div>
+      ) : null}
 
       {interaction.status === "pending" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               size="sm"
+              variant={rejecting ? "outline" : "default"}
               disabled={!onAcceptInteraction || working !== null}
               onClick={() => void handleAccept()}
             >
@@ -1000,7 +1081,14 @@ function RequestConfirmationCard({
               size="sm"
               variant="outline"
               disabled={!onRejectInteraction || working !== null}
-              onClick={() => setRejecting((current) => !current)}
+              onClick={() => {
+                if (!allowDeclineReason) {
+                  void handleReject();
+                  return;
+                }
+                setRejectAttempted(false);
+                setRejecting((current) => !current);
+              }}
             >
               {interaction.payload.rejectLabel ?? "Decline"}
             </Button>
@@ -1011,17 +1099,33 @@ function RequestConfirmationCard({
               <Textarea
                 value={rejectReason}
                 onChange={(event) => setRejectReason(event.target.value)}
-                placeholder={interaction.payload.rejectReasonLabel ?? "Add a short reason for declining this request"}
-                className="min-h-24 bg-background text-sm"
+                placeholder={declineReasonPlaceholder}
+                aria-invalid={rejectAttempted && declineReasonInvalid}
+                className={cn(
+                  "min-h-24 bg-background text-sm",
+                  rejectAttempted && declineReasonInvalid
+                    && "border-rose-500 focus-visible:ring-rose-500/25",
+                )}
               />
-              {rejectRequiresReason && !canReject ? (
+              {rejectAttempted && declineReasonInvalid ? (
                 <p className="text-xs text-destructive">A decline reason is required.</p>
               ) : null}
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={working !== null}
+                  onClick={() => {
+                    setRejecting(false);
+                    setRejectAttempted(false);
+                  }}
+                >
+                  Cancel decline
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!onRejectInteraction || working !== null || !canReject}
+                  disabled={!onRejectInteraction || working !== null}
                   onClick={() => void handleReject()}
                 >
                   {working === "reject" ? (
@@ -1090,10 +1194,13 @@ export function IssueThreadInteractionCard({
               <span className="text-current/60">/</span>
               {statusLabel(interaction.status)}
             </span>
-            {interaction.continuationPolicy === "wake_assignee" ? (
+            {interaction.continuationPolicy === "wake_assignee"
+              || interaction.continuationPolicy === "wake_assignee_on_accept" ? (
               <span className="inline-flex items-center gap-1 rounded-sm border border-border/70 bg-transparent px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/70">
                 <ListChecks className="h-3.5 w-3.5" />
-                Wakes assignee
+                {interaction.continuationPolicy === "wake_assignee_on_accept"
+                  ? "Wakes on confirm"
+                  : "Wakes assignee"}
               </span>
             ) : null}
           </div>

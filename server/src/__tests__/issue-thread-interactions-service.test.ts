@@ -754,6 +754,14 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(accepted.interaction).toMatchObject({
       id: created.id,
       status: "expired",
+      payload: {
+        target: {
+          type: "issue_document",
+          key: "plan",
+          revisionId: nextRevisionId,
+          revisionNumber: 2,
+        },
+      },
       result: {
         version: 1,
         outcome: "stale_target",

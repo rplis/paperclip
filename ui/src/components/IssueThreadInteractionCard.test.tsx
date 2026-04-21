@@ -9,6 +9,9 @@ import { ThemeProvider } from "../context/ThemeContext";
 import { TooltipProvider } from "./ui/tooltip";
 import {
   pendingAskUserQuestionsInteraction,
+  commentExpiredRequestConfirmationInteraction,
+  disabledDeclineReasonRequestConfirmationInteraction,
+  failedRequestConfirmationInteraction,
   pendingRequestConfirmationInteraction,
   pendingSuggestedTasksInteraction,
   staleTargetRequestConfirmationInteraction,
@@ -126,11 +129,17 @@ describe("IssueThreadInteractionCard", () => {
     const saveButton = Array.from(host.querySelectorAll("button")).filter((button) =>
       button.textContent?.includes("Request revisions"),
     ).at(-1);
-    expect(saveButton?.hasAttribute("disabled")).toBe(true);
+    expect(saveButton?.hasAttribute("disabled")).toBe(false);
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
     expect(host.textContent).toContain("A decline reason is required.");
 
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement | null;
     expect(textarea).toBeTruthy();
+    expect(textarea?.getAttribute("aria-invalid")).toBe("true");
 
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(
@@ -175,15 +184,75 @@ describe("IssueThreadInteractionCard", () => {
     );
   });
 
+  it("labels accept-only continuation policies in the card header", () => {
+    const host = renderCard({
+      interaction: {
+        ...pendingRequestConfirmationInteraction,
+        continuationPolicy: "wake_assignee_on_accept",
+      },
+    });
+
+    expect(host.textContent).toContain("Wakes on confirm");
+  });
+
   it("renders request confirmation target links and stale-target expiry", () => {
     const host = renderCard({
       interaction: staleTargetRequestConfirmationInteraction,
     });
 
-    const targetLink = host.querySelector("a");
+    const targetLinks = host.querySelectorAll("a");
     expect(host.textContent).toContain("Expired by target change");
-    expect(host.textContent).toContain("Document: plan rev 3");
-    expect(targetLink?.getAttribute("href")).toContain("#document-plan");
+    expect(host.textContent).toContain("Plan v3");
+    expect(host.textContent).toContain("Plan v4");
+    expect(targetLinks[0]?.getAttribute("href")).toContain("#document-plan");
+    expect(targetLinks[1]?.getAttribute("href")).toContain("#document-plan");
     expect(host.textContent).not.toContain("Approve plan");
+  });
+
+  it("renders a jump link for confirmations expired by comment", () => {
+    const host = renderCard({
+      interaction: commentExpiredRequestConfirmationInteraction,
+    });
+
+    const jumpLink = Array.from(host.querySelectorAll("a")).find((link) =>
+      link.textContent?.includes("Jump to comment"),
+    );
+
+    expect(jumpLink?.getAttribute("href")).toBe(
+      "#comment-22222222-2222-4222-8222-222222222222",
+    );
+  });
+
+  it("declines immediately when decline reasons are disabled", async () => {
+    const onRejectInteraction = vi.fn(async () => undefined);
+    const host = renderCard({
+      interaction: disabledDeclineReasonRequestConfirmationInteraction,
+      onRejectInteraction,
+    });
+
+    const declineButton = Array.from(host.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Keep it"),
+    );
+    expect(declineButton).toBeTruthy();
+
+    await act(async () => {
+      declineButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(host.querySelector("textarea")).toBeNull();
+    expect(onRejectInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "request_confirmation" }),
+      undefined,
+    );
+  });
+
+  it("renders explicit copy for failed request confirmations", () => {
+    const host = renderCard({
+      interaction: failedRequestConfirmationInteraction,
+    });
+
+    expect(host.textContent).toContain(
+      "This request could not be resolved. Try again or create a new request.",
+    );
   });
 });

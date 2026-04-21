@@ -351,9 +351,22 @@ export interface RequestConfirmationIssueDocumentTarget {
   key: string;
   revisionId: string;
   revisionNumber?: number | null;
+  label?: string | null;
+  href?: string | null;
 }
 
-export type RequestConfirmationTarget = RequestConfirmationIssueDocumentTarget;
+export interface RequestConfirmationCustomTarget {
+  type: "custom";
+  key: string;
+  revisionId?: string | null;
+  revisionNumber?: number | null;
+  label?: string | null;
+  href?: string | null;
+}
+
+export type RequestConfirmationTarget =
+  | RequestConfirmationIssueDocumentTarget
+  | RequestConfirmationCustomTarget;
 
 export interface RequestConfirmationPayload {
   version: 1;
@@ -362,6 +375,8 @@ export interface RequestConfirmationPayload {
   rejectLabel?: string | null;
   rejectRequiresReason?: boolean;
   rejectReasonLabel?: string | null;
+  allowDeclineReason?: boolean;
+  declineReasonPlaceholder?: string | null;
   detailsMarkdown?: string | null;
   supersedeOnUserComment?: boolean;
   target?: RequestConfirmationTarget | null;

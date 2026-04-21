@@ -204,7 +204,10 @@ function queueResolvedInteractionContinuationWakeup(input: {
   actor: { actorType: "user" | "agent"; actorId: string };
   source: string;
 }) {
-  if (input.interaction.continuationPolicy !== "wake_assignee") return;
+  if (
+    input.interaction.continuationPolicy !== "wake_assignee"
+    && input.interaction.continuationPolicy !== "wake_assignee_on_accept"
+  ) return;
   if (input.interaction.kind === "request_confirmation" && input.interaction.status !== "accepted") return;
   if (input.interaction.status === "expired") return;
   if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return;

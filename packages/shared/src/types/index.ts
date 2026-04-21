@@ -125,6 +125,7 @@ export type {
   AskUserQuestionsAnswer,
   AskUserQuestionsResult,
   RequestConfirmationIssueDocumentTarget,
+  RequestConfirmationCustomTarget,
   RequestConfirmationTarget,
   RequestConfirmationPayload,
   RequestConfirmationResult,

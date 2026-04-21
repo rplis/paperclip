@@ -250,9 +250,7 @@ async function getIssueDocumentTargetSnapshot(db: Db | any, args: {
   issueId: string;
   target: RequestConfirmationTarget;
 }) {
-  if (args.target.type !== "issue_document") {
-    throw unprocessable(`Unsupported request confirmation target: ${(args.target as { type: string }).type}`);
-  }
+  if (args.target.type !== "issue_document") return null;
   const targetIssueId = args.target.issueId ?? args.issueId;
   const row = await db
     .select({
@@ -282,12 +280,49 @@ async function getIssueDocumentTargetSnapshot(db: Db | any, args: {
   return row;
 }
 
+function buildIssueDocumentTargetFromSnapshot(args: {
+  issueId: string;
+  snapshot: {
+    issueId: string;
+    documentId: string;
+    key: string;
+    latestRevisionId: string | null;
+    latestRevisionNumber: number;
+  } | null;
+}): RequestConfirmationTarget | null {
+  if (!args.snapshot?.latestRevisionId) return null;
+  return {
+    type: "issue_document",
+    issueId: args.snapshot.issueId ?? args.issueId,
+    documentId: args.snapshot.documentId,
+    key: args.snapshot.key,
+    revisionId: args.snapshot.latestRevisionId,
+    revisionNumber: args.snapshot.latestRevisionNumber,
+  };
+}
+
+function buildIssueDocumentTargetFromDocument(args: {
+  issueId: string;
+  document: { id: string; key: string; latestRevisionId?: string | null; latestRevisionNumber?: number | null } | null;
+}): RequestConfirmationTarget | null {
+  if (!args.document?.latestRevisionId) return null;
+  return {
+    type: "issue_document",
+    issueId: args.issueId,
+    documentId: args.document.id,
+    key: args.document.key,
+    revisionId: args.document.latestRevisionId,
+    revisionNumber: args.document.latestRevisionNumber ?? null,
+  };
+}
+
 async function assertRequestConfirmationTargetIsCurrent(db: Db | any, args: {
   companyId: string;
   issueId: string;
   target?: RequestConfirmationTarget | null;
 }) {
   if (!args.target) return;
+  if (args.target.type !== "issue_document") return;
   const snapshot = await getIssueDocumentTargetSnapshot(db, {
     companyId: args.companyId,
     issueId: args.issueId,
@@ -309,6 +344,7 @@ async function expireStaleRequestConfirmationTarget(db: Db | any, args: {
   const interaction = hydrateInteraction(args.row) as RequestConfirmationInteraction;
   const target = interaction.payload.target ?? null;
   if (!target) return null;
+  if (target.type !== "issue_document") return null;
 
   const snapshot = await getIssueDocumentTargetSnapshot(db, {
     companyId: args.row.companyId,
@@ -322,10 +358,20 @@ async function expireStaleRequestConfirmationTarget(db: Db | any, args: {
   if (isCurrent) return null;
 
   const now = new Date();
+  const currentTarget = buildIssueDocumentTargetFromSnapshot({
+    issueId: args.row.issueId,
+    snapshot,
+  });
   const [updated] = await db
     .update(issueThreadInteractions)
     .set({
       status: "expired",
+      payload: currentTarget
+        ? {
+            ...interaction.payload,
+            target: currentTarget,
+          }
+        : interaction.payload,
       result: {
         version: 1,
         outcome: "stale_target",
@@ -907,11 +953,22 @@ export function issueThreadInteractionService(db: Db) {
       const now = new Date();
       const expired: IssueThreadInteraction[] = [];
       for (const row of staleRows) {
-        const target = (hydrateInteraction(row) as RequestConfirmationInteraction).payload.target ?? null;
+        const interaction = hydrateInteraction(row) as RequestConfirmationInteraction;
+        const target = interaction.payload.target ?? null;
+        const currentTarget = buildIssueDocumentTargetFromDocument({
+          issueId: issue.id,
+          document,
+        });
         const [updated] = await db
           .update(issueThreadInteractions)
           .set({
             status: "expired",
+            payload: currentTarget
+              ? {
+                  ...interaction.payload,
+                  target: currentTarget,
+                }
+              : interaction.payload,
             result: {
               version: 1,
               outcome: "stale_target",

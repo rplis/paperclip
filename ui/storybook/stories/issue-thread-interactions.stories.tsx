@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { IssueChatThread } from "@/components/IssueChatThread";
 import { IssueThreadInteractionCard } from "@/components/IssueThreadInteractionCard";
@@ -8,15 +8,20 @@ import {
   answeredAskUserQuestionsInteraction,
   acceptedRequestConfirmationInteraction,
   commentExpiredRequestConfirmationInteraction,
+  failedRequestConfirmationInteraction,
+  genericPendingRequestConfirmationInteraction,
   issueThreadInteractionComments,
   issueThreadInteractionEvents,
   issueThreadInteractionFixtureMeta,
   issueThreadInteractionLiveRuns,
   issueThreadInteractionTranscriptsByRunId,
   mixedIssueThreadInteractions,
+  optionalDeclineRequestConfirmationInteraction,
   pendingAskUserQuestionsInteraction,
   pendingRequestConfirmationInteraction,
   pendingSuggestedTasksInteraction,
+  planApprovalAcceptedRequestConfirmationInteraction,
+  rejectedNoReasonRequestConfirmationInteraction,
   rejectedRequestConfirmationInteraction,
   rejectedSuggestedTasksInteraction,
   staleTargetRequestConfirmationInteraction,
@@ -186,6 +191,33 @@ function InteractiveRequestConfirmationCard() {
   );
 }
 
+function AutoOpenDeclineRequestConfirmationCard({
+  interaction,
+}: {
+  interaction: RequestConfirmationInteraction;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const declineButton = Array.from(ref.current?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes(interaction.payload.rejectLabel ?? "Decline"));
+    declineButton?.click();
+  }, [interaction]);
+
+  return (
+    <div ref={ref}>
+      <IssueThreadInteractionCard
+        interaction={interaction}
+        agentMap={storybookAgentMap}
+        currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+        userLabelMap={boardUserLabels}
+        onAcceptInteraction={() => undefined}
+        onRejectInteraction={() => undefined}
+      />
+    </div>
+  );
+}
+
 const meta = {
   title: "Chat & Comments/Issue Thread Interactions",
   parameters: {
@@ -287,6 +319,61 @@ export const RequestConfirmationPending: Story = {
     <StoryFrame>
       <ScenarioCard
         title="Pending request confirmation"
+        description="A generic confirmation can render without a target or custom labels."
+      >
+        <IssueThreadInteractionCard
+          interaction={genericPendingRequestConfirmationInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+          onAcceptInteraction={() => undefined}
+          onRejectInteraction={() => undefined}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationPendingWithTarget: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending request confirmation with target"
+        description="The watched plan document renders as a compact target chip."
+      >
+        <IssueThreadInteractionCard
+          interaction={pendingRequestConfirmationInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+          onAcceptInteraction={() => undefined}
+          onRejectInteraction={() => undefined}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationPendingDecliningOptional: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending optional decline"
+        description="The decline textarea is visible, but a reason is optional."
+      >
+        <AutoOpenDeclineRequestConfirmationCard
+          interaction={optionalDeclineRequestConfirmationInteraction}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationPendingRequireReason: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending required decline reason"
         description="A plan approval waits for an explicit board decision and requires a decline reason."
       >
         <InteractiveRequestConfirmationCard />
@@ -295,11 +382,11 @@ export const RequestConfirmationPending: Story = {
   ),
 };
 
-export const RequestConfirmationAccepted: Story = {
+export const RequestConfirmationConfirmed: Story = {
   render: () => (
     <StoryFrame>
       <ScenarioCard
-        title="Accepted request confirmation"
+        title="Confirmed request confirmation"
         description="The resolved state remains visible without active controls."
       >
         <IssueThreadInteractionCard
@@ -313,15 +400,33 @@ export const RequestConfirmationAccepted: Story = {
   ),
 };
 
-export const RequestConfirmationRejected: Story = {
+export const RequestConfirmationDeclinedWithReason: Story = {
   render: () => (
     <StoryFrame>
       <ScenarioCard
-        title="Rejected request confirmation"
+        title="Declined request confirmation"
         description="The decline reason stays attached to the request in the thread."
       >
         <IssueThreadInteractionCard
           interaction={rejectedRequestConfirmationInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationDeclinedNoReason: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Declined without a reason"
+        description="The card stays compact when no decline reason was provided."
+      >
+        <IssueThreadInteractionCard
+          interaction={rejectedNoReasonRequestConfirmationInteraction}
           agentMap={storybookAgentMap}
           currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
           userLabelMap={boardUserLabels}
@@ -366,6 +471,58 @@ export const RequestConfirmationExpiredByTargetChange: Story = {
     </StoryFrame>
   ),
 };
+
+export const RequestConfirmationPlanApprovalPending: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending plan approval"
+        description="The plan-approval variant keeps the approval labels and target chip visible."
+      >
+        <InteractiveRequestConfirmationCard />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationPlanApprovalConfirmed: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Confirmed plan approval"
+        description="The resolved plan approval reads as a compact receipt."
+      >
+        <IssueThreadInteractionCard
+          interaction={planApprovalAcceptedRequestConfirmationInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationFailed: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Failed request confirmation"
+        description="The failed state provides explicit recovery copy."
+      >
+        <IssueThreadInteractionCard
+          interaction={failedRequestConfirmationInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const RequestConfirmationAccepted = RequestConfirmationConfirmed;
+export const RequestConfirmationRejected = RequestConfirmationDeclinedWithReason;
 
 export const ReviewSurface: Story = {
   render: () => (
