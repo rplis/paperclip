@@ -1132,9 +1132,9 @@ export function IssueDetail() {
   const { data: rawChildIssues = [], isLoading: childIssuesLoading } = useQuery({
     queryKey:
       issue?.id && resolvedCompanyId
-        ? queryKeys.issues.listByParent(resolvedCompanyId, issue.id)
+        ? queryKeys.issues.listByDescendantRoot(resolvedCompanyId, issue.id)
         : ["issues", "parent", "pending"],
-    queryFn: () => issuesApi.list(resolvedCompanyId!, { parentId: issue!.id }),
+    queryFn: () => issuesApi.list(resolvedCompanyId!, { descendantOf: issue!.id }),
     enabled: !!resolvedCompanyId && !!issue?.id,
     placeholderData: keepPreviousDataForSameQueryTail<Issue[]>(issue?.id ?? "pending"),
   });
@@ -3133,7 +3133,7 @@ export function IssueDetail() {
             projectId={issue.projectId ?? undefined}
             viewStateKey={`paperclip:issue-detail:${issue.id}:subissues-view`}
             issueLinkState={resolvedIssueDetailState ?? location.state}
-            searchFilters={{ parentId: issue.id }}
+            searchFilters={{ descendantOf: issue.id }}
             baseCreateIssueDefaults={buildSubIssueDefaultsForViewer(issue, currentUserId)}
             createIssueLabel="Sub-issue"
             onUpdateIssue={handleChildIssueUpdate}

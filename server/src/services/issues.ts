@@ -106,6 +106,7 @@ export interface IssueFilters {
   workspaceId?: string;
   executionWorkspaceId?: string;
   parentId?: string;
+  descendantOf?: string;
   labelId?: string;
   originKind?: string;
   originId?: string;
@@ -1396,6 +1397,29 @@ export function issueService(db: Db) {
             AND ${issueComments.body} ILIKE ${containsPattern} ESCAPE '\\'
         )
       `;
+      if (filters?.descendantOf) {
+        const descendantIds: string[] = [];
+        const seen = new Set<string>([filters.descendantOf]);
+        let frontier = [filters.descendantOf];
+
+        while (frontier.length > 0) {
+          const children = await db
+            .select({ id: issues.id })
+            .from(issues)
+            .where(and(eq(issues.companyId, companyId), inArray(issues.parentId, frontier)));
+
+          frontier = [];
+          for (const child of children) {
+            if (seen.has(child.id)) continue;
+            seen.add(child.id);
+            descendantIds.push(child.id);
+            frontier.push(child.id);
+          }
+        }
+
+        if (descendantIds.length === 0) return [];
+        conditions.push(inArray(issues.id, descendantIds));
+      }
       if (filters?.status) {
         const statuses = filters.status.split(",").map((s) => s.trim());
         conditions.push(statuses.length === 1 ? eq(issues.status, statuses[0]) : inArray(issues.status, statuses));
