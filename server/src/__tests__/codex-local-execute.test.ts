@@ -419,6 +419,7 @@ describe("codex execute", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.errorCode).toBe("codex_transient_upstream");
+      expect(result.errorFamily).toBe("transient_upstream");
       expect(result.errorMessage).toContain("high demand");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
@@ -474,6 +475,9 @@ describe("codex execute", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.errorCode).toBe("codex_transient_upstream");
+      expect(result.errorFamily).toBe("transient_upstream");
+      expect(result.retryNotBefore).toBe("2026-04-23T04:31:00.000Z");
+      expect(result.resultJson?.retryNotBefore).toBe("2026-04-23T04:31:00.000Z");
       expect(new Date(String(result.resultJson?.transientRetryNotBefore)).getTime()).toBe(
         new Date(2026, 3, 22, 23, 31, 0, 0).getTime(),
       );

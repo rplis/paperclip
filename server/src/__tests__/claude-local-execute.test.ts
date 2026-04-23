@@ -710,6 +710,9 @@ describe("claude execute", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.errorCode).toBe("claude_transient_upstream");
+      expect(result.errorFamily).toBe("transient_upstream");
+      expect(result.retryNotBefore).toBe("2026-04-22T21:00:00.000Z");
+      expect(result.resultJson?.retryNotBefore).toBe("2026-04-22T21:00:00.000Z");
       expect(result.errorMessage ?? "").toContain("extra usage");
       expect(new Date(String(result.resultJson?.transientRetryNotBefore)).getTime()).toBe(
         new Date(2026, 3, 22, 16, 0, 0, 0).getTime(),
@@ -769,6 +772,9 @@ describe("claude execute", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.errorCode).toBe("claude_transient_upstream");
+      expect(result.errorFamily).toBe("transient_upstream");
+      expect(result.retryNotBefore ?? null).toBeNull();
+      expect(result.resultJson?.retryNotBefore ?? null).toBeNull();
       expect(result.resultJson?.transientRetryNotBefore ?? null).toBeNull();
     } finally {
       if (previousHome === undefined) delete process.env.HOME;

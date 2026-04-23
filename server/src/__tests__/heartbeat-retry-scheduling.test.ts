@@ -56,6 +56,8 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
     agentId: string;
     now: Date;
     errorCode: string;
+    errorFamily?: "transient_upstream" | null;
+    retryNotBefore?: string | null;
     scheduledRetryAttempt?: number;
     resultJson?: Record<string, unknown> | null;
     adapterType?: "codex_local" | "claude_local";
@@ -98,7 +100,15 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       finishedAt: input.now,
       scheduledRetryAttempt: input.scheduledRetryAttempt ?? 0,
       scheduledRetryReason: input.scheduledRetryAttempt ? "transient_failure" : null,
-      resultJson: input.resultJson ?? null,
+      resultJson: input.resultJson ?? {
+        ...(input.errorFamily ? { errorFamily: input.errorFamily } : {}),
+        ...(input.retryNotBefore
+          ? {
+              retryNotBefore: input.retryNotBefore,
+              transientRetryNotBefore: input.retryNotBefore,
+            }
+          : {}),
+      },
       contextSnapshot: {
         issueId: randomUUID(),
         wakeReason: "issue_assigned",
@@ -305,7 +315,8 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
         companyId,
         agentId,
         now,
-        errorCode: "codex_transient_upstream",
+        errorCode: "adapter_failed",
+        errorFamily: "transient_upstream",
         scheduledRetryAttempt: index,
       });
 
@@ -354,10 +365,9 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       companyId,
       agentId,
       now,
-      errorCode: "codex_transient_upstream",
-      resultJson: {
-        transientRetryNotBefore: retryNotBefore.toISOString(),
-      },
+      errorCode: "adapter_failed",
+      errorFamily: "transient_upstream",
+      retryNotBefore: retryNotBefore.toISOString(),
     });
 
     const scheduled = await heartbeat.scheduleBoundedRetry(runId, {
@@ -407,11 +417,10 @@ describeEmbeddedPostgres("heartbeat bounded retry scheduling", () => {
       companyId,
       agentId,
       now,
-      errorCode: "claude_transient_upstream",
+      errorCode: "adapter_failed",
+      errorFamily: "transient_upstream",
       adapterType: "claude_local",
-      resultJson: {
-        transientRetryNotBefore: retryNotBefore.toISOString(),
-      },
+      retryNotBefore: retryNotBefore.toISOString(),
     });
 
     const scheduled = await heartbeat.scheduleBoundedRetry(runId, {
