@@ -18,7 +18,7 @@ The load-bearing test. Everything else is secondary.
   1. **Activity state** — whether the agent is currently running, idle, paused, or in an error state
   2. **Current work** — the task, run, or issue the agent is engaged with right now, if any
   3. **Recent health** — outcomes of recent runs (succeeded, failed, mixed). Specific count open to the run.
-  4. **Live economics** — current token burn rate, cumulative session cost, or another real-time signal of spend/resource use
+  4. **Live economics — budget position** (the agent's current standing against its budget) is visible in the monitoring frame. Session burn rate may be present but does not itself satisfy this requirement unless budget position is also shown.
 
   Pass if all four are visible without scrolling. Fail if any one is missing or requires scrolling to locate.
 
@@ -26,17 +26,16 @@ The load-bearing test. Everything else is secondary.
 
 Each secondary mode must be *served*, not just presented. Test the quality of support, not just the presence of information.
 
-- [ ] **Operations.** A teammate can reorder the agent's in-flight tasks from the dashboard, without leaving the page. Pass/fail.
+- [ ] **Operations.** A teammate can change the priority of the agent's in-flight tasks from the dashboard, without leaving the page. Pass/fail.
 - [ ] **Accountability (spend).** A manager can identify which of the agent's tasks are most expensive — not just total spend, but enough granularity to spot outliers. Pass/fail.
 - [ ] **Accountability (tokens).** An engineer can identify which runs burned the most tokens, with enough context to investigate (run identifier, timestamp, which task). Pass/fail.
 - [ ] **Debug.** An engineer can identify failed tasks, see when each one failed, and navigate to the failed run within one interaction from the dashboard. Pass/fail.
 
 ## Section 3 — Action affordances
 
-The three named actions from the brief, scoped as specified.
+The two named actions from the brief, scoped as specified.
 
-- [ ] **Reorder in-flight tasks.** Drag-and-drop or keyboard-reorderable list, scoped to the top 5–10 in-flight tasks. Pass/fail.
-- [ ] **Pause agent.** Single-click action, reversible via the same button, no confirmation dialog. Global to the agent. Pass/fail.
+- [ ] **Change task priority.** Drag-and-drop between priority buckets or explicit priority selector, scoped to the top 5–10 in-flight tasks. Pass/fail.
 - [ ] **Navigate to detail.** Link-based navigation to run/task/issue detail works. Pass/fail. (If the run introduced a different affordance, pass if it works and is at least as fast as the current link approach.)
 
 ## Section 4 — Data preservation
@@ -98,7 +97,7 @@ When evaluating each run, produce this summary at the top of the evaluation:
 ```
 Section 1 (Primary goal):     PASS / FAIL
 Section 2 (Mode coverage):    X / 4 passed
-Section 3 (Actions):          X / 3 passed
+Section 3 (Actions):          X / 2 passed
 Section 4 (Data):             X / 3 passed
 Section 5 (DS compliance):    X / 8 passed (with justifications noted)
 Section 6 (Qualitative):      Improvement: X/5 | Hierarchy: X/5 | Restraint: X/5 | Live-run: X/5

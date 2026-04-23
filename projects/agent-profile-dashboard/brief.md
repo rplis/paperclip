@@ -31,6 +31,12 @@ The dashboard is a **lens** into agent state — not the canonical home for any 
 
 That's the design's first obligation. Everything else — operations controls, spend visibility, debug affordances — must be present and reachable but must not interfere with this goal.
 
+## Required metrics
+
+The dashboard must surface both (a) **budget position** — the agent's current standing against its budget (observed vs. allowed, utilization, remaining), and (b) **session burn rate** — recent cost activity against the current session (cumulative cost and per-run cost over the recent window).
+
+Budget position must fit in the monitoring-no-scrolling frame (it's the signal the primary-goal test is evaluated against). Session burn rate must also be present on the dashboard but may live in a secondary surface (for example, integrated with the costs section) rather than the top-of-page summary.
+
 ## Problems to solve
 
 1. **No clear hierarchy.** Everything on the page reads with roughly equal weight. Users can't tell at a glance what's most important.
@@ -47,10 +53,10 @@ Affirmative scope — what this redesign must do:
 
 - Redesign the content and structure of `AgentOverview`, `LatestRunCard`, and `CostsSection` inside `ui/src/pages/AgentDetail.tsx` (approximately lines 1170–1413)
 - **Preserve visual distinction for live-running agents.** The current cyan-pulse treatment on the Live Run card is the load-bearing signal for "this agent is alive right now." Replacing it requires an equally clear alternative signal.
-- **Surface three named action affordances on the dashboard:**
-  - **Reorder in-flight tasks** — drag-and-drop or keyboard-reorderable list, scoped to the top 5–10 in-flight tasks. No deep task editing; just ordering.
-  - **Pause agent** — single-click action, reversible via the same button, no confirmation dialog. Global to the agent, not task-specific.
+- **Surface two named action affordances on the dashboard:**
+  - **Change task priority** — drag-and-drop between priority buckets or explicit priority selector, scoped to the top 5–10 in-flight tasks. Short note: the backend does not support arbitrary reordering, so the operations use case is served by priority elevation rather than position. Priority is a closed 4-value enum (`critical | high | medium | low`), so this is a promote/demote action across four buckets, not free ordering.
   - **Navigate to run/task/issue detail** — preserve current link-based navigation via cards and rows unless a better affordance is clearly warranted.
+- **Pause agent is out of scope for this redesign.** Pause is handled by the existing page-chrome control (`PauseResumeButton` in the page header), which already satisfies the single-click/reversible/no-confirmation semantics. It is not duplicated on the dashboard.
 - **Keep all current data reachable.** Merging and reorganizing is encouraged; omission is not.
 
 ## Scope — out
