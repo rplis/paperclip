@@ -156,7 +156,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/PAP-1271"');
     expect(html).toContain("text-green-600");
     expect(html).toContain(">PAP-1271<");
-    expect(html).not.toContain("paperclip-mention-chip--issue");
+    expect(html).toContain("paperclip-mention-chip--issue");
   });
 
   it("rewrites full issue URLs to internal issue links", () => {
@@ -167,7 +167,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/PAP-1179"');
     expect(html).toContain("text-red-600");
     expect(html).toContain(">http://localhost:3100/PAP/issues/PAP-1179<");
-    expect(html).not.toContain("paperclip-mention-chip--issue");
+    expect(html).toContain("paperclip-mention-chip--issue");
   });
 
   it("rewrites issue scheme links to internal issue links", () => {
@@ -192,6 +192,7 @@ describe("MarkdownBody", () => {
     expect(html).toContain('href="/issues/PAP-1271"');
     expect(html).toContain('<code style="overflow-wrap:anywhere;word-break:break-word">PAP-1271</code>');
     expect(html).toContain("text-green-600");
+    expect(html).toContain("paperclip-mention-chip--issue");
   });
 
   it("can opt out of issue reference linkification for offline previews", () => {
