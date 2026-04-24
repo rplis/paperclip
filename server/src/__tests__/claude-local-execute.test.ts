@@ -415,7 +415,7 @@ describe("claude execute", () => {
     const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
     process.env.HOME = root;
     process.env.PAPERCLIP_HOME = paperclipHome;
-    process.env.PAPERCLIP_INSTANCE_ID = "default";
+    delete process.env.PAPERCLIP_INSTANCE_ID;
 
     try {
       const first = await execute({
@@ -574,7 +574,7 @@ describe("claude execute", () => {
     const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
     process.env.HOME = root;
     process.env.PAPERCLIP_HOME = paperclipHome;
-    process.env.PAPERCLIP_INSTANCE_ID = "default";
+    delete process.env.PAPERCLIP_INSTANCE_ID;
 
     try {
       const first = await execute({
