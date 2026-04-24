@@ -91,89 +91,97 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
+const mockEnvironmentService = vi.hoisted(() => ({}));
 
 const mockInstanceSettingsService = vi.hoisted(() => ({
   getGeneral: vi.fn(),
 }));
 
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackAgentCreated: mockTrackAgentCreated,
-  trackErrorHandlerCrash: vi.fn(),
-}));
+function registerModuleMocks() {
+  vi.doMock("@paperclipai/shared/telemetry", () => ({
+    trackAgentCreated: mockTrackAgentCreated,
+    trackErrorHandlerCrash: vi.fn(),
+  }));
 
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
-}));
+  vi.doMock("../telemetry.js", () => ({
+    getTelemetryClient: mockGetTelemetryClient,
+  }));
 
-vi.mock("../services/agents.js", () => ({
-  agentService: () => mockAgentService,
-}));
+  vi.doMock("../services/agents.js", () => ({
+    agentService: () => mockAgentService,
+  }));
 
-vi.mock("../services/access.js", () => ({
-  accessService: () => mockAccessService,
-}));
+  vi.doMock("../services/access.js", () => ({
+    accessService: () => mockAccessService,
+  }));
 
-vi.mock("../services/approvals.js", () => ({
-  approvalService: () => mockApprovalService,
-}));
+  vi.doMock("../services/approvals.js", () => ({
+    approvalService: () => mockApprovalService,
+  }));
 
-vi.mock("../services/company-skills.js", () => ({
-  companySkillService: () => mockCompanySkillService,
-}));
+  vi.doMock("../services/company-skills.js", () => ({
+    companySkillService: () => mockCompanySkillService,
+  }));
 
-vi.mock("../services/budgets.js", () => ({
-  budgetService: () => mockBudgetService,
-}));
+  vi.doMock("../services/budgets.js", () => ({
+    budgetService: () => mockBudgetService,
+  }));
 
-vi.mock("../services/heartbeat.js", () => ({
-  heartbeatService: () => mockHeartbeatService,
-}));
+  vi.doMock("../services/heartbeat.js", () => ({
+    heartbeatService: () => mockHeartbeatService,
+  }));
 
-vi.mock("../services/issue-approvals.js", () => ({
-  issueApprovalService: () => mockIssueApprovalService,
-}));
+  vi.doMock("../services/issue-approvals.js", () => ({
+    issueApprovalService: () => mockIssueApprovalService,
+  }));
 
-vi.mock("../services/issues.js", () => ({
-  issueService: () => mockIssueService,
-}));
+  vi.doMock("../services/issues.js", () => ({
+    issueService: () => mockIssueService,
+  }));
 
-vi.mock("../services/secrets.js", () => ({
-  secretService: () => mockSecretService,
-}));
+  vi.doMock("../services/secrets.js", () => ({
+    secretService: () => mockSecretService,
+  }));
 
-vi.mock("../services/agent-instructions.js", () => ({
-  agentInstructionsService: () => mockAgentInstructionsService,
-  syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
-}));
+  vi.doMock("../services/environments.js", () => ({
+    environmentService: () => mockEnvironmentService,
+  }));
 
-vi.mock("../services/workspace-operations.js", () => ({
-  workspaceOperationService: () => mockWorkspaceOperationService,
-}));
+  vi.doMock("../services/agent-instructions.js", () => ({
+    agentInstructionsService: () => mockAgentInstructionsService,
+    syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
+  }));
 
-vi.mock("../services/activity-log.js", () => ({
-  logActivity: mockLogActivity,
-}));
+  vi.doMock("../services/workspace-operations.js", () => ({
+    workspaceOperationService: () => mockWorkspaceOperationService,
+  }));
 
-vi.mock("../services/instance-settings.js", () => ({
-  instanceSettingsService: () => mockInstanceSettingsService,
-}));
+  vi.doMock("../services/activity-log.js", () => ({
+    logActivity: mockLogActivity,
+  }));
 
-vi.mock("../services/index.js", () => ({
-  agentService: () => mockAgentService,
-  agentInstructionsService: () => mockAgentInstructionsService,
-  accessService: () => mockAccessService,
-  approvalService: () => mockApprovalService,
-  companySkillService: () => mockCompanySkillService,
-  budgetService: () => mockBudgetService,
-  heartbeatService: () => mockHeartbeatService,
-  ISSUE_LIST_DEFAULT_LIMIT: 500,
-  issueApprovalService: () => mockIssueApprovalService,
-  issueService: () => mockIssueService,
-  logActivity: mockLogActivity,
-  secretService: () => mockSecretService,
-  syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
-  workspaceOperationService: () => mockWorkspaceOperationService,
-}));
+  vi.doMock("../services/instance-settings.js", () => ({
+    instanceSettingsService: () => mockInstanceSettingsService,
+  }));
+
+  vi.doMock("../services/index.js", () => ({
+    agentService: () => mockAgentService,
+    agentInstructionsService: () => mockAgentInstructionsService,
+    accessService: () => mockAccessService,
+    approvalService: () => mockApprovalService,
+    companySkillService: () => mockCompanySkillService,
+    budgetService: () => mockBudgetService,
+    heartbeatService: () => mockHeartbeatService,
+    ISSUE_LIST_DEFAULT_LIMIT: 500,
+    issueApprovalService: () => mockIssueApprovalService,
+    issueService: () => mockIssueService,
+    logActivity: mockLogActivity,
+    secretService: () => mockSecretService,
+    syncInstructionsBundleConfigFromFilePath: mockSyncInstructionsBundleConfigFromFilePath,
+    workspaceOperationService: () => mockWorkspaceOperationService,
+    environmentService: () => mockEnvironmentService,
+  }));
+}
 
 function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = {}) {
   return {
@@ -241,6 +249,30 @@ async function requestApp(
 
 describe.sequential("agent permission routes", () => {
   beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock("@paperclipai/shared/telemetry");
+    vi.doUnmock("../telemetry.js");
+    vi.doUnmock("../services/access.js");
+    vi.doUnmock("../services/activity-log.js");
+    vi.doUnmock("../services/agent-instructions.js");
+    vi.doUnmock("../services/agents.js");
+    vi.doUnmock("../services/approvals.js");
+    vi.doUnmock("../services/budgets.js");
+    vi.doUnmock("../services/company-skills.js");
+    vi.doUnmock("../services/heartbeat.js");
+    vi.doUnmock("../services/index.js");
+    vi.doUnmock("../services/instance-settings.js");
+    vi.doUnmock("../services/issue-approvals.js");
+    vi.doUnmock("../services/issues.js");
+    vi.doUnmock("../services/secrets.js");
+    vi.doUnmock("../services/environments.js");
+    vi.doUnmock("../services/workspace-operations.js");
+    vi.doUnmock("../adapters/index.js");
+    vi.doUnmock("../routes/agents.js");
+    vi.doUnmock("../routes/authz.js");
+    vi.doUnmock("../middleware/index.js");
+    vi.doUnmock("@paperclipai/adapter-opencode-local/server");
+    registerModuleMocks();
     vi.resetAllMocks();
     mockAgentService.getById.mockReset();
     mockAgentService.list.mockReset();

@@ -88,10 +88,13 @@ const mockWorkProductService = vi.hoisted(() => ({
   listForIssue: vi.fn(async () => []),
 }));
 
+const mockEnvironmentService = vi.hoisted(() => ({}));
+
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
   documentService: () => mockDocumentsService,
+  environmentService: () => mockEnvironmentService,
   executionWorkspaceService: () => mockExecutionWorkspaceService,
   feedbackService: () => mockFeedbackService,
   goalService: () => mockGoalService,
@@ -104,6 +107,10 @@ vi.mock("../services/index.js", () => ({
   projectService: () => mockProjectService,
   routineService: () => mockRoutineService,
   workProductService: () => mockWorkProductService,
+}));
+
+vi.mock("../services/execution-workspaces.js", () => ({
+  executionWorkspaceService: () => mockExecutionWorkspaceService,
 }));
 
 function createApp() {
