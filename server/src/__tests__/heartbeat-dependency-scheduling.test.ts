@@ -424,12 +424,39 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       .then((rows) => rows[0] ?? null);
     expect(skippedWake).toMatchObject({ status: "skipped", reason: "issue_tree_hold_active" });
 
+    const childCommentId = randomUUID();
+    await db.insert(issueComments).values({
+      id: childCommentId,
+      companyId,
+      issueId: childIssueId,
+      authorUserId: "board-user",
+      body: "Please respond while this hold is active.",
+    });
+
+    const forgedChildCommentWake = await heartbeat.wakeup(agentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: "issue_commented",
+      payload: { issueId: childIssueId, commentId: childCommentId },
+      requestedByActorType: "agent",
+      requestedByActorId: agentId,
+    });
+    expect(forgedChildCommentWake).toBeNull();
+
     const childCommentWake = await heartbeat.wakeup(agentId, {
       source: "automation",
       triggerDetail: "system",
       reason: "issue_commented",
-      payload: { issueId: childIssueId, commentId: randomUUID() },
-      contextSnapshot: { issueId: childIssueId, wakeReason: "issue_commented" },
+      payload: { issueId: childIssueId, commentId: childCommentId },
+      requestedByActorType: "user",
+      requestedByActorId: "board-user",
+      contextSnapshot: {
+        issueId: childIssueId,
+        commentId: childCommentId,
+        wakeCommentId: childCommentId,
+        wakeReason: "issue_commented",
+        source: "issue.comment",
+      },
     });
 
     expect(childCommentWake).not.toBeNull();
@@ -493,12 +520,29 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       releasePolicy: { strategy: "manual", note: "full_pause" },
     });
 
+    const rootCommentId = randomUUID();
+    await db.insert(issueComments).values({
+      id: rootCommentId,
+      companyId,
+      issueId: rootIssueId,
+      authorUserId: "board-user",
+      body: "Please respond while this hold is active.",
+    });
+
     const rootCommentWake = await heartbeat.wakeup(agentId, {
       source: "automation",
       triggerDetail: "system",
       reason: "issue_commented",
-      payload: { issueId: rootIssueId, commentId: randomUUID() },
-      contextSnapshot: { issueId: rootIssueId, wakeReason: "issue_commented" },
+      payload: { issueId: rootIssueId, commentId: rootCommentId },
+      requestedByActorType: "user",
+      requestedByActorId: "board-user",
+      contextSnapshot: {
+        issueId: rootIssueId,
+        commentId: rootCommentId,
+        wakeCommentId: rootCommentId,
+        wakeReason: "issue_commented",
+        source: "issue.comment",
+      },
     });
 
     expect(rootCommentWake).not.toBeNull();

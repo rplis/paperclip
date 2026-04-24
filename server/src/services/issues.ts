@@ -38,7 +38,7 @@ import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
 import {
-  ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
+  isVerifiedIssueTreeControlInteractionWake,
   issueTreeControlService,
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
@@ -80,18 +80,6 @@ function readStringFromRecord(record: unknown, key: string) {
   if (!record || typeof record !== "object") return null;
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readLatestWakeCommentId(record: unknown) {
-  if (!record || typeof record !== "object") return null;
-  const value = (record as Record<string, unknown>).wakeCommentIds;
-  if (Array.isArray(value)) {
-    const latest = value
-      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-      .at(-1);
-    if (latest) return latest.trim();
-  }
-  return readStringFromRecord(record, "wakeCommentId") ?? readStringFromRecord(record, "commentId");
 }
 
 export interface IssueFilters {
@@ -956,18 +944,25 @@ export function issueService(db: Db) {
   ) {
     if (!checkoutRunId) return false;
     const run = await db
-      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .select({
+        id: heartbeatRuns.id,
+        agentId: heartbeatRuns.agentId,
+        wakeupRequestId: heartbeatRuns.wakeupRequestId,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
       .from(heartbeatRuns)
       .where(and(eq(heartbeatRuns.id, checkoutRunId), eq(heartbeatRuns.companyId, companyId)))
       .then((rows) => rows[0] ?? null);
-    const wakeReason =
-      readStringFromRecord(run?.contextSnapshot, "wakeReason") ??
-      readStringFromRecord(run?.contextSnapshot, "reason");
-    return Boolean(
-      wakeReason &&
-      ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS.has(wakeReason) &&
-      readLatestWakeCommentId(run?.contextSnapshot),
-    );
+    const issueId = readStringFromRecord(run?.contextSnapshot, "issueId");
+    if (!run || !issueId) return false;
+    return isVerifiedIssueTreeControlInteractionWake(db, {
+      companyId,
+      issueId,
+      agentId: run.agentId,
+      runId: run.id,
+      wakeupRequestId: run.wakeupRequestId,
+      contextSnapshot: run.contextSnapshot as Record<string, unknown> | null | undefined,
+    });
   }
 
   async function assertAssignableUser(companyId: string, userId: string) {

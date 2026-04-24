@@ -85,6 +85,7 @@ import {
 import { issueService } from "./issues.js";
 import {
   ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
+  isVerifiedIssueTreeControlInteractionWake,
   issueTreeControlService,
 } from "./issue-tree-control.js";
 import {
@@ -3662,7 +3663,14 @@ export function heartbeatService(db: Db) {
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(run.companyId, issueId);
-      const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(context);
+      const treeHoldInteractionWake = activePauseHold && await isVerifiedIssueTreeControlInteractionWake(db, {
+        companyId: run.companyId,
+        issueId,
+        agentId: run.agentId,
+        runId: run.id,
+        wakeupRequestId: run.wakeupRequestId,
+        contextSnapshot: context,
+      });
       if (activePauseHold && !treeHoldInteractionWake) {
         await cancelRunInternal(run.id, "Cancelled because issue is held by an active subtree pause hold");
         await logActivity(db, {
@@ -5701,7 +5709,14 @@ export function heartbeatService(db: Db) {
         const deferredPayload = parseObject(deferred.payload);
         const deferredContextSeed = parseObject(deferredPayload[DEFERRED_WAKE_CONTEXT_KEY]);
         const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id);
-        const treeHoldInteractionWake = activePauseHold && allowsIssueInteractionWake(deferredContextSeed);
+        const treeHoldInteractionWake = activePauseHold && await isVerifiedIssueTreeControlInteractionWake(tx, {
+          companyId: issue.companyId,
+          issueId: issue.id,
+          agentId: deferred.agentId,
+          contextSnapshot: deferredContextSeed,
+          requestedByActorType: deferred.requestedByActorType,
+          requestedByActorId: deferred.requestedByActorId,
+        });
         if (activePauseHold && !treeHoldInteractionWake) {
           await tx
             .update(agentWakeupRequests)
@@ -6108,7 +6123,14 @@ export function heartbeatService(db: Db) {
     if (issueId) {
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(agent.companyId, issueId);
       if (activePauseHold) {
-        const treeHoldInteractionWake = allowsIssueInteractionWake(enrichedContextSnapshot);
+        const treeHoldInteractionWake = await isVerifiedIssueTreeControlInteractionWake(db, {
+          companyId: agent.companyId,
+          issueId,
+          agentId,
+          contextSnapshot: enrichedContextSnapshot,
+          requestedByActorType: opts.requestedByActorType,
+          requestedByActorId: opts.requestedByActorId,
+        });
 
         if (!treeHoldInteractionWake) {
           await writeSkippedRequest("issue_tree_hold_active");
