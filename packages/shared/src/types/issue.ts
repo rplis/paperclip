@@ -116,6 +116,7 @@ export interface IssueRelationIssueSummary {
   priority: IssuePriority;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
+  terminalBlockers?: IssueRelationIssueSummary[];
 }
 
 export type IssueBlockerAttentionState = "none" | "covered" | "needs_attention";

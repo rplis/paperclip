@@ -385,6 +385,59 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("shows terminal blocker context when an immediate blocker is transitively blocked", () => {
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            issueStatus="blocked"
+            blockedBy={[
+              {
+                id: "blocker-1",
+                identifier: "PAP-2167",
+                title: "Phase 7 review",
+                status: "blocked",
+                priority: "medium",
+                assigneeAgentId: "agent-1",
+                assigneeUserId: null,
+                terminalBlockers: [
+                  {
+                    id: "terminal-1",
+                    identifier: "PAP-2201",
+                    title: "Security sign-off",
+                    status: "todo",
+                    priority: "high",
+                    assigneeAgentId: "agent-2",
+                    assigneeUserId: null,
+                  },
+                ],
+              },
+            ]}
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent).toContain("PAP-2167");
+    expect(container.textContent).toContain("Phase 7 review");
+    expect(container.textContent).toContain("Ultimately waiting on");
+    expect(container.textContent).toContain("PAP-2201");
+    expect(container.textContent).toContain("Security sign-off");
+    expect(container.querySelector('[data-issue-path-id="PAP-2201"]')).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("shows paused assigned agent context above the composer", () => {
     const root = createRoot(container);
     const pausedAgent = {

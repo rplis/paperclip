@@ -763,6 +763,109 @@ function appendBlockerAttentionEdges(
   }
 }
 
+type IssueRelationSummaryRow = {
+  relatedId: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  priority: string;
+  assigneeAgentId: string | null;
+  assigneeUserId: string | null;
+};
+
+function summarizeIssueRelationRow(row: IssueRelationSummaryRow): IssueRelationIssueSummary {
+  return {
+    id: row.relatedId,
+    identifier: row.identifier,
+    title: row.title,
+    status: row.status as IssueRelationIssueSummary["status"],
+    priority: row.priority as IssueRelationIssueSummary["priority"],
+    assigneeAgentId: row.assigneeAgentId,
+    assigneeUserId: row.assigneeUserId,
+  };
+}
+
+async function terminalExplicitBlockersByRoot(
+  companyId: string,
+  roots: IssueRelationIssueSummary[],
+  dbOrTx: DbReader,
+): Promise<Map<string, IssueRelationIssueSummary[]>> {
+  const rootIds = [...new Set(roots.map((root) => root.id))];
+  const terminalByRoot = new Map<string, IssueRelationIssueSummary[]>();
+  if (rootIds.length === 0) return terminalByRoot;
+
+  const nodesById = new Map<string, IssueRelationIssueSummary>();
+  const edgesByIssueId = new Map<string, string[]>();
+  for (const root of roots) nodesById.set(root.id, root);
+
+  let frontier = rootIds;
+  for (let depth = 0; frontier.length > 0 && depth < BLOCKER_ATTENTION_MAX_DEPTH; depth += 1) {
+    const nextFrontier = new Set<string>();
+    for (const chunk of chunkList([...new Set(frontier)], ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+      const rows = await dbOrTx
+        .select({
+          currentIssueId: issueRelations.relatedIssueId,
+          relatedId: issues.id,
+          identifier: issues.identifier,
+          title: issues.title,
+          status: issues.status,
+          priority: issues.priority,
+          assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
+        })
+        .from(issueRelations)
+        .innerJoin(issues, eq(issueRelations.issueId, issues.id))
+        .where(
+          and(
+            eq(issueRelations.companyId, companyId),
+            eq(issueRelations.type, "blocks"),
+            inArray(issueRelations.relatedIssueId, chunk),
+            eq(issues.companyId, companyId),
+            ne(issues.status, "done"),
+          ),
+        );
+
+      for (const row of rows) {
+        const existingEdges = edgesByIssueId.get(row.currentIssueId) ?? [];
+        if (!existingEdges.includes(row.relatedId)) {
+          existingEdges.push(row.relatedId);
+          edgesByIssueId.set(row.currentIssueId, existingEdges);
+        }
+        if (!nodesById.has(row.relatedId)) {
+          nodesById.set(row.relatedId, summarizeIssueRelationRow(row));
+          nextFrontier.add(row.relatedId);
+        }
+      }
+    }
+
+    if (nodesById.size > BLOCKER_ATTENTION_MAX_NODES) break;
+    frontier = [...nextFrontier];
+  }
+
+  const collectTerminal = (issueId: string, seen: Set<string>): IssueRelationIssueSummary[] => {
+    if (seen.has(issueId)) return [];
+    const node = nodesById.get(issueId);
+    if (!node || node.status === "done") return [];
+    const nextSeen = new Set(seen);
+    nextSeen.add(issueId);
+    const downstreamIds = edgesByIssueId.get(issueId) ?? [];
+    if (downstreamIds.length === 0) return [node];
+    return downstreamIds.flatMap((downstreamId) => collectTerminal(downstreamId, nextSeen));
+  };
+
+  for (const rootId of rootIds) {
+    const deduped = new Map<string, IssueRelationIssueSummary>();
+    for (const blocker of collectTerminal(rootId, new Set())) {
+      if (blocker.id !== rootId) deduped.set(blocker.id, blocker);
+    }
+    if (deduped.size > 0) {
+      terminalByRoot.set(rootId, [...deduped.values()].sort((a, b) => a.title.localeCompare(b.title)));
+    }
+  }
+
+  return terminalByRoot;
+}
+
 async function listIssueBlockerAttentionMap(
   dbOrTx: any,
   companyId: string,
@@ -1425,30 +1528,26 @@ export function issueService(db: Db) {
     ]);
 
     for (const row of blockedByRows) {
-      empty.get(row.currentIssueId)?.blockedBy.push({
-        id: row.relatedId,
-        identifier: row.identifier,
-        title: row.title,
-        status: row.status as IssueRelationIssueSummary["status"],
-        priority: row.priority as IssueRelationIssueSummary["priority"],
-        assigneeAgentId: row.assigneeAgentId,
-        assigneeUserId: row.assigneeUserId,
-      });
+      empty.get(row.currentIssueId)?.blockedBy.push(summarizeIssueRelationRow(row));
     }
     for (const row of blockingRows) {
-      empty.get(row.currentIssueId)?.blocks.push({
-        id: row.relatedId,
-        identifier: row.identifier,
-        title: row.title,
-        status: row.status as IssueRelationIssueSummary["status"],
-        priority: row.priority as IssueRelationIssueSummary["priority"],
-        assigneeAgentId: row.assigneeAgentId,
-        assigneeUserId: row.assigneeUserId,
-      });
+      empty.get(row.currentIssueId)?.blocks.push(summarizeIssueRelationRow(row));
     }
+
+    const terminalByRoot = await terminalExplicitBlockersByRoot(
+      companyId,
+      [...empty.values()].flatMap((relations) => relations.blockedBy),
+      dbOrTx,
+    );
 
     for (const relations of empty.values()) {
       relations.blockedBy.sort((a, b) => a.title.localeCompare(b.title));
+      for (const blocker of relations.blockedBy) {
+        const terminalBlockers = terminalByRoot.get(blocker.id);
+        if (terminalBlockers && terminalBlockers.length > 0) {
+          blocker.terminalBlockers = terminalBlockers;
+        }
+      }
       relations.blocks.sort((a, b) => a.title.localeCompare(b.title));
     }
 

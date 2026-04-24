@@ -353,6 +353,26 @@ function IssueBlockedNotice({
   if (blockers.length === 0 && issueStatus !== "blocked") return null;
 
   const blockerLabel = blockers.length === 1 ? "the linked issue" : "the linked issues";
+  const terminalBlockers = blockers
+    .flatMap((blocker) => blocker.terminalBlockers ?? [])
+    .filter((blocker, index, all) => all.findIndex((candidate) => candidate.id === blocker.id) === index);
+
+  const renderBlockerChip = (blocker: IssueRelationIssueSummary) => {
+    const issuePathId = blocker.identifier ?? blocker.id;
+    return (
+      <IssueLinkQuicklook
+        key={blocker.id}
+        issuePathId={issuePathId}
+        to={createIssueDetailPath(issuePathId)}
+        className="inline-flex max-w-full items-center gap-1 rounded-md border border-amber-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-amber-950 transition-colors hover:border-amber-500 hover:bg-amber-100 hover:underline dark:border-amber-500/40 dark:bg-background/40 dark:text-amber-100 dark:hover:bg-amber-500/15"
+      >
+        <span>{blocker.identifier ?? blocker.id.slice(0, 8)}</span>
+        <span className="max-w-[18rem] truncate font-sans text-[11px] text-amber-800 dark:text-amber-200">
+          {blocker.title}
+        </span>
+      </IssueLinkQuicklook>
+    );
+  };
 
   return (
     <div className="mb-3 rounded-md border border-amber-300/70 bg-amber-50/90 px-3 py-2.5 text-sm text-amber-950 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
@@ -366,22 +386,15 @@ function IssueBlockedNotice({
           </p>
           {blockers.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {blockers.map((blocker) => {
-                const issuePathId = blocker.identifier ?? blocker.id;
-                return (
-                  <IssueLinkQuicklook
-                    key={blocker.id}
-                    issuePathId={issuePathId}
-                    to={createIssueDetailPath(issuePathId)}
-                    className="inline-flex max-w-full items-center gap-1 rounded-md border border-amber-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-amber-950 transition-colors hover:border-amber-500 hover:bg-amber-100 hover:underline dark:border-amber-500/40 dark:bg-background/40 dark:text-amber-100 dark:hover:bg-amber-500/15"
-                  >
-                    <span>{blocker.identifier ?? blocker.id.slice(0, 8)}</span>
-                    <span className="max-w-[18rem] truncate font-sans text-[11px] text-amber-800 dark:text-amber-200">
-                      {blocker.title}
-                    </span>
-                  </IssueLinkQuicklook>
-                );
-              })}
+              {blockers.map(renderBlockerChip)}
+            </div>
+          ) : null}
+          {terminalBlockers.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                Ultimately waiting on
+              </span>
+              {terminalBlockers.map(renderBlockerChip)}
             </div>
           ) : null}
         </div>
