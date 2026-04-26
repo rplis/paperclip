@@ -101,6 +101,7 @@ export interface IssueFilters {
   originId?: string;
   includeRoutineExecutions?: boolean;
   excludeRoutineExecutions?: boolean;
+  includeBlockedBy?: boolean;
   q?: string;
   limit?: number;
 }
@@ -1303,10 +1304,11 @@ async function blockedByMapForIssues(
 ): Promise<Map<string, IssueRelationIssueSummary[]>> {
   const map = new Map<string, IssueRelationIssueSummary[]>();
   const uniqueIssueIds = [...new Set(issueIds)];
+  if (uniqueIssueIds.length === 0) return map;
+
   for (const issueId of uniqueIssueIds) {
     map.set(issueId, []);
   }
-  if (uniqueIssueIds.length === 0) return map;
 
   for (const issueIdChunk of chunkList(uniqueIssueIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
     const rows = await dbOrTx
@@ -1840,6 +1842,7 @@ export function issueService(db: Db) {
       const inboxArchivedByUserId = filters?.inboxArchivedByUserId?.trim() || undefined;
       const unreadForUserId = filters?.unreadForUserId?.trim() || undefined;
       const contextUserId = unreadForUserId ?? touchedByUserId ?? inboxArchivedByUserId;
+      const includeBlockedBy = filters?.includeBlockedBy === true;
       const rawSearch = filters?.q?.trim() ?? "";
       const hasSearch = rawSearch.length > 0;
       const escapedSearch = hasSearch ? escapeLikePattern(rawSearch) : "";
@@ -1978,7 +1981,9 @@ export function issueService(db: Db) {
           ? userReadStatsForIssues(db, companyId, contextUserId, issueIds)
           : Promise.resolve([]),
         lastActivityStatsForIssues(db, companyId, issueIds),
-        blockedByMapForIssues(db, companyId, issueIds),
+        includeBlockedBy
+          ? blockedByMapForIssues(db, companyId, issueIds)
+          : Promise.resolve(new Map<string, IssueRelationIssueSummary[]>()),
       ]);
       const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
       const lastActivityByIssueId = new Map(lastActivityRows.map((row) => [row.issueId, row]));
@@ -1994,7 +1999,7 @@ export function issueService(db: Db) {
           ) ?? row.updatedAt;
           return {
             ...row,
-            blockedBy: blockedByMap.get(row.id) ?? [],
+            ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
             lastActivityAt,
             ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
           };
@@ -2012,7 +2017,7 @@ export function issueService(db: Db) {
         ) ?? row.updatedAt;
         return {
           ...row,
-          blockedBy: blockedByMap.get(row.id) ?? [],
+          ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
           lastActivityAt,
           ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
           ...deriveIssueUserContext(row, contextUserId, {

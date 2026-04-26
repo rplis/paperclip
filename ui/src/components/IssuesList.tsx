@@ -204,7 +204,7 @@ function saveIssueColumns(key: string, columns: InboxIssueColumn[]) {
 function sortIssues(issues: Issue[], state: IssueViewState): Issue[] {
   if (state.sortField === "workflow") {
     const ordered = workflowSort(issues);
-    return state.sortDir === "desc" ? ordered.reverse() : ordered;
+    return state.sortDir === "desc" ? [...ordered].reverse() : ordered;
   }
   const sorted = [...issues];
   const dir = state.sortDir === "asc" ? 1 : -1;
@@ -848,9 +848,8 @@ export function IssuesList({
   const checklistAffordanceEnabled = useMemo(
     () =>
       defaultSortField === "workflow"
-      && viewState.sortField === "workflow"
       && viewState.groupBy === "none",
-    [defaultSortField, viewState.groupBy, viewState.sortField],
+    [defaultSortField, viewState.groupBy],
   );
   const workflowChecklistMeta = useMemo(() => {
     if (!checklistAffordanceEnabled) return null;
