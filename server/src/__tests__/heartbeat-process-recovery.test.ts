@@ -7,8 +7,10 @@ import {
   agents,
   agentRuntimeState,
   agentWakeupRequests,
+  budgetPolicies,
   companySkills,
   companies,
+  costEvents,
   createDb,
   documentRevisions,
   documents,
@@ -306,6 +308,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(activityLog);
     await db.delete(agentRuntimeState);
     await db.delete(companySkills);
+    await db.delete(costEvents);
     await db.delete(issueComments);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
@@ -336,6 +339,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       }
     }
     await db.delete(agentWakeupRequests);
+    await db.delete(budgetPolicies);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(agentRuntimeState);
       try {
@@ -1294,6 +1298,77 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeups).toHaveLength(1);
     const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
     expect(runs).toHaveLength(0);
+  });
+
+  it("skips budget-blocked assigned todo work with no prior run and continues the sweep", async () => {
+    const blocked = await seedAssignedTodoNoRunFixture();
+    const unblocked = await seedAssignedTodoNoRunFixture();
+    await db.insert(budgetPolicies).values({
+      companyId: blocked.companyId,
+      scopeType: "agent",
+      scopeId: blocked.agentId,
+      metric: "billed_cents",
+      windowKind: "calendar_month_utc",
+      amount: 1,
+      hardStopEnabled: true,
+      isActive: true,
+    });
+    await db.insert(costEvents).values({
+      companyId: blocked.companyId,
+      agentId: blocked.agentId,
+      issueId: blocked.issueId,
+      provider: "test",
+      biller: "test",
+      billingType: "tokens",
+      model: "test-model",
+      costCents: 1,
+      occurredAt: new Date(),
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+    expect(result.assignmentDispatched).toBe(1);
+    expect(result.dispatchRequeued).toBe(0);
+    expect(result.continuationRequeued).toBe(0);
+    expect(result.escalated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.issueIds).toEqual([unblocked.issueId]);
+
+    const blockedWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, blocked.agentId));
+    expect(blockedWakeups).toHaveLength(0);
+    const blockedRuns = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, blocked.agentId));
+    expect(blockedRuns).toHaveLength(0);
+
+    const blockedIssue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, blocked.issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(blockedIssue?.status).toBe("todo");
+
+    const unblockedWakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, unblocked.agentId));
+    expect(unblockedWakeups).toHaveLength(1);
+    expect(unblockedWakeups[0]).toMatchObject({
+      reason: "issue_assigned",
+      payload: expect.objectContaining({
+        issueId: unblocked.issueId,
+        mutation: "assigned_todo_liveness_dispatch",
+      }),
+    });
+    const unblockedRuns = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, unblocked.agentId));
+    expect(unblockedRuns).toHaveLength(1);
+    if (unblockedRuns[0]?.id) {
+      await waitForRunToSettle(heartbeat, unblockedRuns[0].id);
+    }
   });
 
   it("does not dispatch assigned todo work with no prior run when the agent is paused", async () => {

@@ -406,6 +406,14 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     });
   }
 
+  async function isInvocationBudgetBlocked(issue: typeof issues.$inferSelect, agentId: string) {
+    const budgetBlock = await budgets.getInvocationBlock(issue.companyId, agentId, {
+      issueId: issue.id,
+      projectId: issue.projectId,
+    });
+    return Boolean(budgetBlock);
+  }
+
   async function reconcileUnassignedBlockingIssues() {
     const candidates = await db
       .select({
@@ -1596,6 +1604,11 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
       if (issue.status === "todo") {
         if (!latestRun) {
+          if (await isInvocationBudgetBlocked(issue, agentId)) {
+            result.skipped += 1;
+            continue;
+          }
+
           const queued = await enqueueInitialAssignedTodoDispatch(issue, agentId);
           if (queued) {
             result.assignmentDispatched += 1;
@@ -1628,6 +1641,11 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           } else {
             result.skipped += 1;
           }
+          continue;
+        }
+
+        if (await isInvocationBudgetBlocked(issue, agentId)) {
+          result.skipped += 1;
           continue;
         }
 
@@ -1669,6 +1687,11 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         } else {
           result.skipped += 1;
         }
+        continue;
+      }
+
+      if (await isInvocationBudgetBlocked(issue, agentId)) {
+        result.skipped += 1;
         continue;
       }
 
