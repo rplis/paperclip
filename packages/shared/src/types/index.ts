@@ -215,6 +215,7 @@ export type {
   EnvBinding,
   AgentEnvConfig,
   CompanySecret,
+  CompanySecretAgentReference,
   SecretProviderDescriptor,
 } from "./secrets.js";
 export type {

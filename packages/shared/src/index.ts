@@ -479,6 +479,7 @@ export type {
   EnvBinding,
   AgentEnvConfig,
   CompanySecret,
+  CompanySecretAgentReference,
   SecretProviderDescriptor,
   Routine,
   RoutineVariable,
