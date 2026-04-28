@@ -649,6 +649,49 @@ describe("IssueChatThread", () => {
     scrollHost.remove();
   });
 
+  // PAP-2672 follow-up: clicking Jump to latest must refresh the comments
+  // page so a comment that arrived after the initial load is in cache before
+  // we resolve the scroll target. Otherwise we land on the latest *loaded*
+  // comment instead of the absolute newest.
+  it("invokes onRefreshLatestComments before scrolling on Jump to latest", () => {
+    const refreshMock = vi.fn(async () => undefined);
+    const directComments = issueChatLongThreadComments.slice(0, 8);
+
+    const root = createRoot(container);
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={directComments}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+            onRefreshLatestComments={refreshMock}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const jump = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Jump to latest",
+    ) as HTMLButtonElement | undefined;
+    expect(jump).toBeDefined();
+
+    act(() => {
+      jump?.click();
+    });
+
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("findLatestCommentMessageIndex prefers the last comment-anchored row (PAP-2672)", () => {
     const messages = [
       { metadata: { custom: { anchorId: "comment-a" } } },

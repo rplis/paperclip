@@ -560,6 +560,7 @@ type IssueDetailChatTabProps = {
   hasOlderComments: boolean;
   commentsLoadingOlder: boolean;
   onLoadOlderComments: () => void;
+  onRefreshLatestComments: () => Promise<unknown> | void;
   composerRef: Ref<IssueChatComposerHandle>;
   feedbackVotes?: FeedbackVote[];
   feedbackDataSharingPreference: "allowed" | "not_allowed" | "prompt";
@@ -613,6 +614,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   hasOlderComments,
   commentsLoadingOlder,
   onLoadOlderComments,
+  onRefreshLatestComments,
   composerRef,
   feedbackVotes,
   feedbackDataSharingPreference,
@@ -837,6 +839,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             }
           : undefined}
         onImageClick={onImageClick}
+        onRefreshLatestComments={onRefreshLatestComments}
       />
     </div>
   );
@@ -1092,6 +1095,7 @@ export function IssueDetail() {
     isFetchingNextPage: commentsLoadingOlder,
     hasNextPage: hasOlderComments,
     fetchNextPage: fetchOlderComments,
+    refetch: refetchComments,
   } = useInfiniteQuery({
     queryKey: queryKeys.issues.comments(issueId!),
     queryFn: ({ pageParam }) =>
@@ -2556,6 +2560,13 @@ export function IssueDetail() {
   const loadOlderComments = useCallback(() => {
     void fetchOlderComments();
   }, [fetchOlderComments]);
+  const refetchLatestComments = useCallback(async () => {
+    // Refetches every loaded page (page 0 first), so any comment that
+    // landed after the initial load — including ones live updates may
+    // have dropped on reconnect — is in cache before we scroll the user
+    // to the absolute newest.
+    await refetchComments();
+  }, [refetchComments]);
   useEffect(() => {
     if (!shouldPrefetchOlderComments) return;
     void fetchOlderComments();
@@ -3418,6 +3429,7 @@ export function IssueDetail() {
               hasOlderComments={hasOlderComments}
               commentsLoadingOlder={commentsLoadingOlder}
               onLoadOlderComments={loadOlderComments}
+              onRefreshLatestComments={refetchLatestComments}
               composerRef={commentComposerRef}
               feedbackVotes={feedbackVotes}
               feedbackDataSharingPreference={feedbackDataSharingPreference}
