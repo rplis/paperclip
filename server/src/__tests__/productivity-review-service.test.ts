@@ -14,6 +14,7 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
+import { MAX_ISSUE_REQUEST_DEPTH } from "@paperclipai/shared";
 import {
   DEFAULT_PRODUCTIVITY_REVIEW_NO_COMMENT_STREAK_RUNS,
   PRODUCTIVITY_REVIEW_ORIGIN_KIND,
@@ -243,6 +244,44 @@ describeEmbeddedPostgres("productivity review service", () => {
     expect(review?.description).toContain("Runs in rolling windows: 10/1h");
   });
 
+  it("ignores non-assignee comments when evaluating high-churn productivity reviews", async () => {
+    const now = new Date("2026-04-28T12:00:00.000Z");
+    const seeded = await seedAssignedIssue();
+    await insertRuns({
+      companyId: seeded.companyId,
+      agentId: seeded.coderId,
+      issueId: seeded.issueId,
+      count: 9,
+      now,
+    });
+    const managerRuns = await insertRuns({
+      companyId: seeded.companyId,
+      agentId: seeded.managerId,
+      issueId: seeded.issueId,
+      count: 10,
+      now,
+    });
+    await db.insert(issueComments).values(
+      managerRuns.map((run, index) => ({
+        companyId: seeded.companyId,
+        issueId: seeded.issueId,
+        authorAgentId: seeded.managerId,
+        createdByRunId: run.id,
+        body: `Manager note ${index}`,
+        createdAt: run.createdAt as Date,
+        updatedAt: run.createdAt as Date,
+      })),
+    );
+
+    const result = await productivityReviewService(db).reconcileProductivityReviews({
+      now,
+      companyId: seeded.companyId,
+    });
+
+    expect(result.created).toBe(0);
+    expect(await listProductivityReviews(seeded.companyId)).toHaveLength(0);
+  });
+
   it("skips productivity-review descendants so reviews cannot recursively spawn reviews", async () => {
     const now = new Date("2026-04-28T12:00:00.000Z");
     const seeded = await seedAssignedIssue();
@@ -357,5 +396,32 @@ describeEmbeddedPostgres("productivity review service", () => {
       .where(eq(activityLog.action, "issue.productivity_review_continuation_held"));
     expect(activities).toHaveLength(1);
     expect(activities[0]?.entityId).toBe(seeded.issueId);
+  });
+
+  it("clamps poisoned requestDepth metadata instead of aborting productivity reconciliation", async () => {
+    const now = new Date("2026-04-28T12:00:00.000Z");
+    const seeded = await seedAssignedIssue();
+
+    await db
+      .update(issues)
+      .set({ requestDepth: 2_147_483_647 })
+      .where(eq(issues.id, seeded.issueId));
+
+    await insertRuns({
+      companyId: seeded.companyId,
+      agentId: seeded.coderId,
+      issueId: seeded.issueId,
+      count: DEFAULT_PRODUCTIVITY_REVIEW_NO_COMMENT_STREAK_RUNS,
+      now,
+    });
+
+    const result = await productivityReviewService(db).reconcileProductivityReviews({
+      now,
+      companyId: seeded.companyId,
+    });
+
+    expect(result.failed).toBe(0);
+    const [review] = await listProductivityReviews(seeded.companyId);
+    expect(review?.requestDepth).toBe(MAX_ISSUE_REQUEST_DEPTH);
   });
 });

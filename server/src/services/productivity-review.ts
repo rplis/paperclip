@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { clampIssueRequestDepth } from "@paperclipai/shared";
 import {
   agents,
   companies,
@@ -9,6 +10,7 @@ import {
   issues,
   projects,
 } from "@paperclipai/db";
+import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { budgetService } from "./budgets.js";
 import { issueService } from "./issues.js";
@@ -262,14 +264,19 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       .then((rows) => rows[0]?.count ?? 0);
   }
 
-  async function countIssueCommentsSince(companyId: string, issueId: string, since?: Date) {
+  async function countIssueCommentsSince(companyId: string, issueId: string, agentId: string, since?: Date) {
     return db
       .select({ count: sql<number>`count(*)::int` })
       .from(issueComments)
+      .innerJoin(heartbeatRuns, eq(heartbeatRuns.id, issueComments.createdByRunId))
       .where(
         and(
           eq(issueComments.companyId, companyId),
           eq(issueComments.issueId, issueId),
+          eq(issueComments.authorAgentId, agentId),
+          eq(heartbeatRuns.companyId, companyId),
+          eq(heartbeatRuns.agentId, agentId),
+          issueRunScopeSql(issueId),
           since ? sql`${issueComments.createdAt} >= ${since.toISOString()}::timestamptz` : undefined,
         ),
       )
@@ -328,23 +335,34 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     const [
       runCountLastHour,
       runCountLastSixHours,
-      commentCount,
-      commentCountLastHour,
-      commentCountLastSixHours,
+      assigneeRunCommentCount,
+      assigneeRunCommentCountLastHour,
+      assigneeRunCommentCountLastSixHours,
       latestComments,
       costRow,
     ] = await Promise.all([
       countIssueRunsSince(sourceIssue.companyId, sourceAgent.id, sourceIssue.id, oneHourAgo),
       countIssueRunsSince(sourceIssue.companyId, sourceAgent.id, sourceIssue.id, sixHoursAgo),
-      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id),
-      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id, oneHourAgo),
-      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id, sixHoursAgo),
+      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id, sourceAgent.id),
+      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id, sourceAgent.id, oneHourAgo),
+      countIssueCommentsSince(sourceIssue.companyId, sourceIssue.id, sourceAgent.id, sixHoursAgo),
       db
-        .select()
+        .select({ comment: issueComments })
         .from(issueComments)
-        .where(and(eq(issueComments.companyId, sourceIssue.companyId), eq(issueComments.issueId, sourceIssue.id)))
+        .innerJoin(heartbeatRuns, eq(heartbeatRuns.id, issueComments.createdByRunId))
+        .where(
+          and(
+            eq(issueComments.companyId, sourceIssue.companyId),
+            eq(issueComments.issueId, sourceIssue.id),
+            eq(issueComments.authorAgentId, sourceAgent.id),
+            eq(heartbeatRuns.companyId, sourceIssue.companyId),
+            eq(heartbeatRuns.agentId, sourceAgent.id),
+            issueRunScopeSql(sourceIssue.id),
+          ),
+        )
         .orderBy(desc(issueComments.createdAt), desc(issueComments.id))
-        .limit(5),
+        .limit(5)
+        .then((rows) => rows.map((row) => row.comment)),
       db
         .select({ costCents: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
         .from(costEvents)
@@ -364,9 +382,9 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     const longActive = elapsedMs !== null && elapsedMs >= thresholds.longActiveMs;
     const highChurn =
       runCountLastHour >= thresholds.highChurnHourly ||
-      commentCountLastHour >= thresholds.highChurnHourly ||
+      assigneeRunCommentCountLastHour >= thresholds.highChurnHourly ||
       runCountLastSixHours >= thresholds.highChurnSixHours ||
-      commentCountLastSixHours >= thresholds.highChurnSixHours;
+      assigneeRunCommentCountLastSixHours >= thresholds.highChurnSixHours;
     const trigger = choosePrimaryTrigger({ noComment, longActive, highChurn });
     if (!trigger) return null;
 
@@ -375,7 +393,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     if (longActive) triggerReasons.push(`current active episode has lasted ${msToHuman(elapsedMs)}`);
     if (highChurn) {
       triggerReasons.push(
-        `${runCountLastHour} runs/${commentCountLastHour} comments in 1h; ${runCountLastSixHours} runs/${commentCountLastSixHours} comments in 6h`,
+        `${runCountLastHour} runs/${assigneeRunCommentCountLastHour} assignee-run comments in 1h; ${runCountLastSixHours} runs/${assigneeRunCommentCountLastSixHours} assignee-run comments in 6h`,
       );
     }
 
@@ -390,9 +408,9 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       activeRunCount,
       runCountLastHour,
       runCountLastSixHours,
-      commentCount,
-      commentCountLastHour,
-      commentCountLastSixHours,
+      commentCount: assigneeRunCommentCount,
+      commentCountLastHour: assigneeRunCommentCountLastHour,
+      commentCountLastSixHours: assigneeRunCommentCountLastSixHours,
       elapsedMs,
       latestRuns: latestRuns.slice(0, 5),
       latestComments,
@@ -474,7 +492,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       `- No-comment completed-run streak: ${evidence.noCommentStreak}`,
       `- Current active elapsed time: ${msToHuman(evidence.elapsedMs)}`,
       `- Runs in rolling windows: ${evidence.runCountLastHour}/1h, ${evidence.runCountLastSixHours}/6h`,
-      `- Comments total/window: ${evidence.commentCount} total, ${evidence.commentCountLastHour}/1h, ${evidence.commentCountLastSixHours}/6h`,
+      `- Assignee run-linked comments total/window: ${evidence.commentCount} total, ${evidence.commentCountLastHour}/1h, ${evidence.commentCountLastSixHours}/6h`,
       `- Cost events total: ${evidence.costCents} cents`,
       `- Current next action: ${evidence.nextAction ? truncateInline(evidence.nextAction, 500) : "none recorded"}`,
       "",
@@ -482,14 +500,14 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       "",
       `- No-comment streak: ${evidence.thresholds.noCommentStreakRuns} completed runs`,
       `- Long active duration: ${msToHuman(evidence.thresholds.longActiveMs)}`,
-      `- High churn: ${evidence.thresholds.highChurnHourly}/1h or ${evidence.thresholds.highChurnSixHours}/6h runs/comments`,
+      `- High churn: ${evidence.thresholds.highChurnHourly}/1h or ${evidence.thresholds.highChurnSixHours}/6h runs/assignee-run comments`,
       `- Resolved-review snooze: ${msToHuman(evidence.thresholds.resolvedSnoozeMs)}`,
       "",
       "## Latest Runs",
       "",
       latestRuns,
       "",
-      "## Latest Comments",
+      "## Latest Assignee Run Comments",
       "",
       latestComments,
       "",
@@ -513,7 +531,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       `- Trigger: \`${evidence.trigger}\` (${formatTrigger(evidence.trigger)})`,
       `- Reasons: ${evidence.triggerReasons.join("; ")}`,
       `- No-comment streak: ${evidence.noCommentStreak}`,
-      `- Runs/comments: ${evidence.runCountLastHour}/${evidence.commentCountLastHour} in 1h, ${evidence.runCountLastSixHours}/${evidence.commentCountLastSixHours} in 6h`,
+      `- Runs/assignee comments: ${evidence.runCountLastHour}/${evidence.commentCountLastHour} in 1h, ${evidence.runCountLastSixHours}/${evidence.commentCountLastSixHours} in 6h`,
       `- Next action: ${evidence.nextAction ? truncateInline(evidence.nextAction, 300) : "none recorded"}`,
     ].join("\n");
   }
@@ -561,7 +579,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
         originKind: PRODUCTIVITY_REVIEW_ORIGIN_KIND,
         originId: evidence.sourceIssue.id,
         originFingerprint: productivityReviewFingerprint(evidence.sourceIssue.id),
-        requestDepth: evidence.sourceIssue.requestDepth + 1,
+        requestDepth: clampIssueRequestDepth(clampIssueRequestDepth(evidence.sourceIssue.requestDepth) + 1),
       });
     } catch (error) {
       const maybe = error as { code?: string; constraint?: string; message?: string };
@@ -650,7 +668,9 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
       existing: 0,
       snoozed: 0,
       skipped: 0,
+      failed: 0,
       reviewIssueIds: [] as string[],
+      failedIssueIds: [] as string[],
     };
 
     const prefixCache = new Map<string, string>();
@@ -682,11 +702,25 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
         prefix = await getCompanyIssuePrefix(candidate.companyId);
         prefixCache.set(candidate.companyId, prefix);
       }
-      const outcome = await createOrUpdateReview(evidence, { prefix });
-      if (outcome.kind === "created") result.created += 1;
-      else if (outcome.kind === "updated") result.updated += 1;
-      else result.existing += 1;
-      result.reviewIssueIds.push(outcome.reviewIssueId);
+      try {
+        const outcome = await createOrUpdateReview(evidence, { prefix });
+        if (outcome.kind === "created") result.created += 1;
+        else if (outcome.kind === "updated") result.updated += 1;
+        else result.existing += 1;
+        result.reviewIssueIds.push(outcome.reviewIssueId);
+      } catch (err) {
+        result.failed += 1;
+        result.failedIssueIds.push(candidate.id);
+        logger.warn(
+          {
+            err,
+            companyId: candidate.companyId,
+            issueId: candidate.id,
+            requestDepth: candidate.requestDepth,
+          },
+          "productivity review reconciliation skipped malformed candidate",
+        );
+      }
     }
 
     return result;
