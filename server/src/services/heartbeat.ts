@@ -8,11 +8,13 @@ import type { Db } from "@paperclipai/db";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
   ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
+  MODEL_PROFILE_KEYS,
   isEnvironmentDriverSupportedForAdapter,
   type BillingType,
   type EnvironmentLeaseStatus,
   type ExecutionWorkspace,
   type ExecutionWorkspaceConfig,
+  type ModelProfileKey,
   type RunLivenessState,
 } from "@paperclipai/shared";
 import {
@@ -879,6 +881,7 @@ type SessionCompactionDecision = {
 };
 
 interface ParsedIssueAssigneeAdapterOverrides {
+  modelProfile: ModelProfileKey | null;
   adapterConfig: Record<string, unknown> | null;
   useProjectWorkspace: boolean | null;
 }
@@ -1259,6 +1262,9 @@ function parseIssueAssigneeAdapterOverrides(
   raw: unknown,
 ): ParsedIssueAssigneeAdapterOverrides | null {
   const parsed = parseObject(raw);
+  const modelProfile = MODEL_PROFILE_KEYS.includes(parsed.modelProfile as ModelProfileKey)
+    ? parsed.modelProfile as ModelProfileKey
+    : null;
   const parsedAdapterConfig = parseObject(parsed.adapterConfig);
   const adapterConfig =
     Object.keys(parsedAdapterConfig).length > 0 ? parsedAdapterConfig : null;
@@ -1266,8 +1272,9 @@ function parseIssueAssigneeAdapterOverrides(
     typeof parsed.useProjectWorkspace === "boolean"
       ? parsed.useProjectWorkspace
       : null;
-  if (!adapterConfig && useProjectWorkspace === null) return null;
+  if (!modelProfile && !adapterConfig && useProjectWorkspace === null) return null;
   return {
+    modelProfile,
     adapterConfig,
     useProjectWorkspace,
   };

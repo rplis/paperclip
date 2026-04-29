@@ -6,6 +6,7 @@ export {
   findServerAdapter,
   findActiveServerAdapter,
   detectAdapterModel,
+  listAdapterModelProfiles,
   registerServerAdapter,
   unregisterServerAdapter,
   requireServerAdapter,

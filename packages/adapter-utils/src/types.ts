@@ -144,6 +144,16 @@ export interface AdapterModel {
   label: string;
 }
 
+export type AdapterModelProfileKey = "cheap";
+
+export interface AdapterModelProfileDefinition {
+  key: AdapterModelProfileKey;
+  label: string;
+  description?: string;
+  adapterConfig: Record<string, unknown>;
+  source?: "adapter_default" | "discovered";
+}
+
 export type AdapterEnvironmentCheckLevel = "info" | "warn" | "error";
 
 export interface AdapterEnvironmentCheck {
@@ -329,6 +339,8 @@ export interface ServerAdapterModule {
   supportsLocalAgentJwt?: boolean;
   models?: AdapterModel[];
   listModels?: () => Promise<AdapterModel[]>;
+  modelProfiles?: AdapterModelProfileDefinition[];
+  listModelProfiles?: () => Promise<AdapterModelProfileDefinition[]>;
   /**
    * Optional explicit refresh hook for model discovery.
    * Use this when the adapter caches discovered models and needs a bypass path
