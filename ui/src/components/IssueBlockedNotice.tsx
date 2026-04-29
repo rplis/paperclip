@@ -8,7 +8,8 @@ import type {
   RequestConfirmationInteraction,
   SuggestTasksInteraction,
 } from "@paperclipai/shared";
-import { AlertTriangle, Hourglass } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Hourglass } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { createIssueDetailPath } from "../lib/issueDetailBreadcrumb";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { IssueLinkQuicklook } from "./IssueLinkQuicklook";
@@ -378,38 +379,6 @@ export function IssueBlockedNotice({
     return <>This issue is on hold pending a human decision.</>;
   })();
 
-  const explicitWaitingTargetLabel = (() => {
-    if (!pendingInteraction) {
-      if (pendingApproval) {
-        const id = pendingApproval.id;
-        return `Approval ${id.slice(0, 8)}`;
-      }
-      return null;
-    }
-    if (pendingInteraction.kind === "request_confirmation") {
-      const target = pendingInteraction.payload?.target ?? null;
-      if (target?.type === "issue_document" && target.key === "plan") {
-        const revLabel = target.revisionNumber != null ? `r${target.revisionNumber}` : "latest";
-        return `Plan revision ${revLabel}`;
-      }
-      if (target?.label) return target.label;
-      if (target?.type === "custom" && target.key) return target.key;
-      return "Confirmation";
-    }
-    if (pendingInteraction.kind === "ask_user_questions") {
-      const payload = pendingInteraction.payload as AskUserQuestionsPayload;
-      const count = payload?.questions?.length ?? 0;
-      if (count === 0) return "Questions";
-      return `${count} ${count === 1 ? "question" : "questions"}`;
-    }
-    if (pendingInteraction.kind === "suggest_tasks") {
-      const count = pendingInteraction.payload?.tasks?.length ?? 0;
-      if (count === 0) return "Suggested tasks";
-      return `${count} suggested ${count === 1 ? "task" : "tasks"}`;
-    }
-    return null;
-  })();
-
   const explicitWaitingResumeLabel = (() => {
     if (pendingInteraction) {
       const policy = pendingInteraction.continuationPolicy ?? "none";
@@ -432,37 +401,24 @@ export function IssueBlockedNotice({
     return null;
   })();
 
-  const explicitWaitingPills = (() => {
+  const explicitWaitingDetails = (() => {
     if (!showExplicitWaiting) return null;
-    const pillClass =
-      "inline-flex max-w-full items-center gap-1 rounded-md border border-sky-300/70 bg-white/80 px-1.5 py-0.5 text-[11px] font-medium text-sky-900 dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100";
-    const labelClass =
-      "shrink-0 text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80";
-    const valueClass = "min-w-0 break-words";
-    const pills: React.ReactNode[] = [];
-    if (explicitWaitingTargetLabel) {
-      pills.push(
-        <span key="target" className={pillClass}>
-          <span className={labelClass}>Target</span>
-          <span className={valueClass}>{explicitWaitingTargetLabel}</span>
-        </span>,
-      );
-    }
-    pills.push(
-      <span key="owner" className={pillClass}>
-        <span className={labelClass}>Owner</span>
-        <span className={valueClass}>{ownerLabel}</span>
-      </span>,
+
+    const labelClass = "shrink-0 text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80";
+    return (
+      <dl className="space-y-0.5 pt-0.5 text-xs text-sky-900 dark:text-sky-100">
+        <div className="flex flex-wrap items-baseline gap-1.5">
+          <dt className={labelClass}>Owner</dt>
+          <dd className="min-w-0 break-words">{ownerLabel}</dd>
+        </div>
+        {explicitWaitingResumeLabel ? (
+          <div className="flex flex-wrap items-baseline gap-1.5">
+            <dt className={labelClass}>Resume</dt>
+            <dd className="min-w-0 break-words">{explicitWaitingResumeLabel}</dd>
+          </div>
+        ) : null}
+      </dl>
     );
-    if (explicitWaitingResumeLabel) {
-      pills.push(
-        <span key="resume" className={pillClass} title={explicitWaitingResumeLabel}>
-          <span className={labelClass}>Resume</span>
-          <span className={valueClass}>{explicitWaitingResumeLabel}</span>
-        </span>,
-      );
-    }
-    return <div className="flex flex-wrap items-center gap-1.5 pt-0.5">{pills}</div>;
   })();
 
   const explicitWaitingJumpAnchor = (() => {
@@ -470,23 +426,16 @@ export function IssueBlockedNotice({
     let anchorId: string | null = null;
     let label: string | null = null;
     if (pendingInteraction) {
-      anchorId = `issue-thread-interaction-${pendingInteraction.id}`;
+      anchorId = `interaction-${pendingInteraction.id}`;
       if (pendingInteraction.kind === "request_confirmation") label = "Jump to confirmation";
       else if (pendingInteraction.kind === "ask_user_questions") label = "Jump to questions";
       else if (pendingInteraction.kind === "suggest_tasks") label = "Jump to suggestions";
     } else if (pendingApproval) {
-      anchorId = `issue-approval-${pendingApproval.id}`;
+      anchorId = `approval-${pendingApproval.id}`;
       label = "Jump to approval";
     }
     if (!anchorId || !label) return null;
-    return (
-      <a
-        href={`#${anchorId}`}
-        className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline dark:text-sky-300"
-      >
-        {label} ↓
-      </a>
-    );
+    return <ExplicitWaitingJumpAnchor anchorId={anchorId} label={label} />;
   })();
 
   const ownerPill = (() => {
@@ -557,7 +506,7 @@ export function IssueBlockedNotice({
           </p>
           {showExplicitWaiting ? (
             <>
-              {explicitWaitingPills}
+              {explicitWaitingDetails}
               {isWaitChain && waitLeafBlockers.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                   <span className={subRowLabelClass}>Waiting at</span>
@@ -593,5 +542,51 @@ export function IssueBlockedNotice({
         </div>
       </div>
     </div>
+  );
+}
+
+function ExplicitWaitingJumpAnchor({ anchorId, label }: { anchorId: string; label: string }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [direction, setDirection] = useState<"up" | "down">("down");
+
+  useEffect(() => {
+    const button = buttonRef.current;
+    if (!button) return;
+    const update = () => {
+      const target = document.getElementById(anchorId);
+      if (!target) return;
+      const targetRect = target.getBoundingClientRect();
+      const buttonRect = button.getBoundingClientRect();
+      const targetMid = targetRect.top + targetRect.height / 2;
+      const buttonMid = buttonRect.top + buttonRect.height / 2;
+      setDirection(targetMid < buttonMid ? "up" : "down");
+    };
+    update();
+    window.addEventListener("scroll", update, { passive: true, capture: true });
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, { capture: true } as EventListenerOptions);
+      window.removeEventListener("resize", update);
+    };
+  }, [anchorId]);
+
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const target = document.getElementById(anchorId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const Arrow = direction === "up" ? ArrowUp : ArrowDown;
+  return (
+    <button
+      type="button"
+      ref={buttonRef}
+      onClick={handleClick}
+      className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline dark:text-sky-300"
+    >
+      {label}
+      <Arrow className="h-3 w-3" aria-hidden />
+    </button>
   );
 }

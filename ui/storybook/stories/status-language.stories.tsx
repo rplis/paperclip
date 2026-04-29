@@ -466,7 +466,7 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   },
   {
     label: "Explicit wait (plan confirmation)",
-    caption: "A pending board confirmation against the latest plan revision — sky banner, target/owner/resume pills, jump anchor.",
+    caption: "A pending board confirmation against the latest plan revision — sky banner, owner/resume rows, jump anchor.",
     issueStatus: "in_review",
     issueIdentifier: "PAP-2708",
     blockers: [],
@@ -505,7 +505,7 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   },
   {
     label: "Explicit wait (user response)",
-    caption: "Pending ask_user_questions waiting on a specific user — sky banner with target = '2 questions'.",
+    caption: "Pending ask_user_questions waiting on a specific user — sky banner with owner/resume rows and a Jump to questions anchor.",
     issueStatus: "in_review",
     issueIdentifier: "PAP-2710",
     blockers: [],
@@ -541,7 +541,7 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   },
   {
     label: "Explicit wait (board approval)",
-    caption: "Pending board approval, no thread interaction — sky banner falls back to approval target/copy.",
+    caption: "Pending board approval, no thread interaction — sky banner falls back to board-approval headline and Jump to approval anchor.",
     issueStatus: "in_review",
     issueIdentifier: "PAP-2711",
     blockers: [],

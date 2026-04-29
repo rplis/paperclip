@@ -147,7 +147,10 @@ describe("IssueBlockedNotice", () => {
     expect(html).toContain('data-blocker-attention-state="covered"');
     expect(html).toContain('data-blocker-attention-reason="explicit_waiting"');
     expect(html).toContain("Waiting on board confirmation");
-    expect(html).toContain("Plan revision r2");
+    expect(html).not.toContain("Plan revision r2");
+    expect(html).not.toMatch(/>\s*Target\s*</);
+    expect(html).toContain(">Owner<");
+    expect(html).toContain(">Resume<");
     expect(html).toContain("Resumes when the board accepts");
     expect(html).toContain("border-sky-300/70");
     expect(html).not.toContain("border-rose-300/70");
@@ -196,7 +199,7 @@ describe("IssueBlockedNotice", () => {
 
     expect(html).toContain("Waiting on board approval");
     expect(html).toContain("A board approval is open");
-    expect(html).toContain("Approval approval");
+    expect(html).not.toContain("Approval approval");
     expect(html).toContain("Jump to approval");
     expect(html).toContain("border-sky-300/70");
   });
