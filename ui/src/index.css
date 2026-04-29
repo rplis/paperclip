@@ -457,9 +457,7 @@
 
 /* Strip the MDXEditor's default inline-code styling from the text inside chips
    (the link label otherwise picks up a monospace font + gray tint). */
-.paperclip-mdxeditor-content a.paperclip-mention-chip,
 .paperclip-mdxeditor-content a.paperclip-mention-chip code,
-.paperclip-mdxeditor-content a.paperclip-project-mention-chip,
 .paperclip-mdxeditor-content a.paperclip-project-mention-chip code {
   font-family: inherit;
   background: none;
