@@ -223,7 +223,10 @@ function CodeBlock({
       setCopied(true);
     }
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setCopied(false), 1500);
+    timerRef.current = setTimeout(() => {
+      setCopied(false);
+      setFailed(false);
+    }, 1500);
   }, [children]);
 
   const label = failed ? "Copy failed" : copied ? "Copied!" : "Copy";

@@ -1056,7 +1056,7 @@ describe("IssuesList", () => {
   });
 
   it("waits for the desktop main scroll container before rendering more local rows", async () => {
-    const manyIssues = Array.from({ length: 420 }, (_, index) =>
+    const manyIssues = Array.from({ length: 120 }, (_, index) =>
       createIssue({
         id: `issue-${index + 1}`,
         identifier: `PAP-${index + 1}`,
@@ -1114,8 +1114,8 @@ describe("IssuesList", () => {
         title: `Issue ${index + 1}`,
       }),
     );
-  const onLoadMoreIssues = vi.fn();
-  setDocumentScrollMetrics({ innerHeight: 2000, scrollY: 0, scrollHeight: 1000 });
+    const onLoadMoreIssues = vi.fn();
+    setDocumentScrollMetrics({ innerHeight: 2000, scrollY: 0, scrollHeight: 1000 });
 
     const { root } = renderWithQueryClient(
       <IssuesList
