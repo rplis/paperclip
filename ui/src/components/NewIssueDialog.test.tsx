@@ -229,14 +229,32 @@ async function typeTextareaValue(textarea: HTMLTextAreaElement, value: string) {
       "value",
     )?.set;
     valueSetter?.call(textarea, value);
-    textarea.dispatchEvent(new InputEvent("input", {
-      bubbles: true,
-      data: value,
-      inputType: "insertText",
-    }));
+    textarea.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: value,
+        inputType: "insertText",
+      }),
+    );
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await flush();
+}
+
+async function waitForAssertion(assertion: () => void, attempts = 20) {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await flush();
+    }
+  }
+
+  throw lastError;
 }
 
 function renderDialog(container: HTMLDivElement) {
@@ -286,6 +304,7 @@ describe("NewIssueDialog", () => {
     mockAuthApi.getSession.mockResolvedValue({ user: { id: "user-1" } });
     mockAssetsApi.uploadImage.mockResolvedValue({ contentPath: "/uploads/asset.png" });
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    localStorage.clear();
     mockIssuesApi.create.mockResolvedValue({
       id: "issue-2",
       companyId: "company-1",
@@ -369,7 +388,9 @@ describe("NewIssueDialog", () => {
     const submitButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Create Sub-Issue"));
     expect(submitButton).not.toBeUndefined();
-    expect(submitButton?.hasAttribute("disabled")).toBe(false);
+    await waitForAssertion(() => {
+      expect(submitButton?.hasAttribute("disabled")).toBe(false);
+    });
 
     await act(async () => {
       submitButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -391,6 +412,17 @@ describe("NewIssueDialog", () => {
   });
 
   it("submits the latest locally typed title and description", async () => {
+    let resolveProjects: (projects: Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      archivedAt: string | null;
+      color: string;
+    }>) => void = () => undefined;
+    mockProjectsApi.list.mockReturnValue(new Promise((resolve) => {
+      resolveProjects = resolve;
+    }));
+
     const { root } = renderDialog(container);
     await flush();
 
@@ -401,6 +433,20 @@ describe("NewIssueDialog", () => {
 
     await typeTextareaValue(titleInput!, "Typed issue");
     await typeTextareaValue(descriptionInput!, "Typed description");
+
+    await act(async () => {
+      resolveProjects([
+        {
+          id: "project-1",
+          name: "Alpha",
+          description: null,
+          archivedAt: null,
+          color: "#445566",
+        },
+      ]);
+      await Promise.resolve();
+    });
+    await flush();
 
     const submitButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Create Issue"));
