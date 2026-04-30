@@ -299,11 +299,19 @@ else
   done <<< "$VERSIONED_PACKAGE_INFO"
 
   release_info "  Waiting for npm dist-tags and package metadata to converge..."
-  wait_for_release_registry_state \
+  if wait_for_release_registry_state \
     "$REGISTRY_STATE_VERIFY_ATTEMPTS" \
     "$REGISTRY_STATE_VERIFY_DELAY_SECONDS" \
-    "${verify_args[@]}" \
-    || release_fail "publish completed, but npm dist-tags or registry metadata never converged for ${TARGET_PUBLISH_VERSION}"
+    "${verify_args[@]}"; then
+    :
+  else
+    verify_status=$?
+    if [ "$verify_status" -eq 2 ]; then
+      release_fail "publish completed, but registry verification failed immediately for ${TARGET_PUBLISH_VERSION}; dist-tag state is wrong or requires operator intervention"
+    fi
+
+    release_fail "publish completed, but npm dist-tags or registry metadata never converged for ${TARGET_PUBLISH_VERSION}"
+  fi
 fi
 
 release_info ""

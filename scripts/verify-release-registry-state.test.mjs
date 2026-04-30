@@ -6,6 +6,7 @@ import {
   createManifestLookupKey,
   fetchRegistryJson,
   isCanaryVersion,
+  verifyPackageRegistryProblems,
   verifyPackageRegistryState,
 } from "./verify-release-registry-state.mjs";
 
@@ -195,6 +196,36 @@ test("verifyPackageRegistryState fails when canary latest is left in place by de
       "@paperclipai/plugin-e2b@2026.425.0-canary.5 via latest: dependencies requires @paperclipai/plugin-sdk@2026.425.0-canary.5, but npm does not expose that version",
     ],
   );
+});
+
+test("verifyPackageRegistryProblems marks canary latest drift as non-retriable", () => {
+  const packageDocsByName = new Map([
+    [
+      "@paperclipai/plugin-e2b",
+      {
+        "dist-tags": {
+          latest: "2026.425.0-canary.5",
+          canary: "2026.427.0-canary.3",
+        },
+        versions: {
+          "2026.427.0-canary.3": {},
+        },
+      },
+    ],
+  ]);
+
+  const problems = verifyPackageRegistryProblems({
+    packageName: "@paperclipai/plugin-e2b",
+    packageDoc: packageDocsByName.get("@paperclipai/plugin-e2b"),
+    packageDocsByName,
+    channel: "canary",
+    distTag: "canary",
+    targetVersion: "2026.427.0-canary.3",
+    allowCanaryLatest: false,
+  });
+
+  assert.equal(problems[0]?.retriable, false);
+  assert.match(problems[0]?.message ?? "", /latest dist-tag still resolves to canary/);
 });
 
 test("verifyPackageRegistryState allows intentional canary latest but still checks dependencies", () => {
