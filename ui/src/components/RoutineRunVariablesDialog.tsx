@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   WORKSPACE_BRANCH_ROUTINE_VARIABLE,
   type Agent,
+  type ExecutionWorkspace,
   type IssueExecutionWorkspaceSettings,
   type Project,
   type RoutineVariable,
@@ -68,7 +69,27 @@ function defaultExecutionWorkspaceModeForProject(project: Project | null | undef
   return "shared_workspace";
 }
 
-function buildInitialWorkspaceConfig(project: Project | null | undefined) {
+function issueModeForExistingWorkspace(mode: string | null | undefined) {
+  if (mode === "isolated_workspace" || mode === "operator_branch" || mode === "shared_workspace") return mode;
+  if (mode === "adapter_managed" || mode === "cloud_sandbox") return "agent_default";
+  return "shared_workspace";
+}
+
+function buildInitialWorkspaceConfig(
+  project: Project | null | undefined,
+  defaultExecutionWorkspace?: ExecutionWorkspace | null,
+) {
+  if (defaultExecutionWorkspace && defaultExecutionWorkspace.projectId === project?.id) {
+    return {
+      executionWorkspaceId: defaultExecutionWorkspace.id,
+      executionWorkspacePreference: "reuse_existing",
+      executionWorkspaceSettings: {
+        mode: issueModeForExistingWorkspace(defaultExecutionWorkspace.mode),
+      } as IssueExecutionWorkspaceSettings,
+      projectWorkspaceId: defaultExecutionWorkspace.projectWorkspaceId ?? defaultProjectWorkspaceIdForProject(project),
+    };
+  }
+
   const defaultMode = defaultExecutionWorkspaceModeForProject(project);
   return {
     executionWorkspaceId: null as string | null,
@@ -143,6 +164,7 @@ export function RoutineRunVariablesDialog({
   agents,
   defaultProjectId,
   defaultAssigneeAgentId,
+  defaultExecutionWorkspace,
   variables,
   isPending,
   onSubmit,
@@ -155,6 +177,7 @@ export function RoutineRunVariablesDialog({
   agents: Agent[];
   defaultProjectId?: string | null;
   defaultAssigneeAgentId?: string | null;
+  defaultExecutionWorkspace?: ExecutionWorkspace | null;
   variables: RoutineVariable[];
   isPending: boolean;
   onSubmit: (data: RoutineRunDialogSubmitData) => void;
@@ -193,7 +216,8 @@ export function RoutineRunVariablesDialog({
   const currentAssignee = selection.assigneeAgentId
     ? agents.find((agent) => agent.id === selection.assigneeAgentId) ?? null
     : null;
-  const [workspaceConfig, setWorkspaceConfig] = useState(() => buildInitialWorkspaceConfig(selectedProject));
+  const [workspaceConfig, setWorkspaceConfig] = useState(() =>
+    buildInitialWorkspaceConfig(selectedProject, defaultExecutionWorkspace));
   const [workspaceConfigValid, setWorkspaceConfigValid] = useState(true);
   const [workspaceBranchName, setWorkspaceBranchName] = useState<string | null>(null);
 
@@ -213,10 +237,13 @@ export function RoutineRunVariablesDialog({
     setValues(buildInitialValues(variables));
     const nextSelection = buildInitialRunSelection({ defaultAssigneeAgentId, defaultProjectId });
     setSelection(nextSelection);
-    setWorkspaceConfig(buildInitialWorkspaceConfig(projects.find((project) => project.id === nextSelection.projectId) ?? null));
+    setWorkspaceConfig(buildInitialWorkspaceConfig(
+      projects.find((project) => project.id === nextSelection.projectId) ?? null,
+      defaultExecutionWorkspace,
+    ));
     setWorkspaceConfigValid(true);
-    setWorkspaceBranchName(null);
-  }, [defaultAssigneeAgentId, defaultProjectId, open, projects, variables]);
+    setWorkspaceBranchName(defaultExecutionWorkspace?.branchName ?? null);
+  }, [defaultAssigneeAgentId, defaultExecutionWorkspace, defaultProjectId, open, projects, variables]);
 
   const workspaceBranchAutoValue = workspaceSelectionEnabled && workspaceBranchName
     ? workspaceBranchName
@@ -245,9 +272,13 @@ export function RoutineRunVariablesDialog({
     executionWorkspaceId: workspaceConfig.executionWorkspaceId,
     executionWorkspacePreference: workspaceConfig.executionWorkspacePreference,
     executionWorkspaceSettings: workspaceConfig.executionWorkspaceSettings,
-    currentExecutionWorkspace: null,
+    currentExecutionWorkspace:
+      workspaceConfig.executionWorkspaceId && workspaceConfig.executionWorkspaceId === defaultExecutionWorkspace?.id
+        ? defaultExecutionWorkspace
+        : null,
   }), [
     companyId,
+    defaultExecutionWorkspace,
     selectedProject?.id,
     workspaceConfig.executionWorkspaceId,
     workspaceConfig.executionWorkspacePreference,
@@ -271,10 +302,13 @@ export function RoutineRunVariablesDialog({
     setWorkspaceConfig((current) => applyWorkspaceDraft(current, data));
     setWorkspaceConfigValid((current) => (current === meta.canSave ? current : meta.canSave));
     setWorkspaceBranchName((current) => {
-      const next = meta.workspaceBranchName ?? null;
+      const defaultWorkspaceBranchName = defaultExecutionWorkspace?.branchName ?? null;
+      const next = meta.workspaceBranchName
+        ?? (data.executionWorkspaceId === defaultExecutionWorkspace?.id ? defaultWorkspaceBranchName : null)
+        ?? null;
       return current === next ? current : next;
     });
-  }, []);
+  }, [defaultExecutionWorkspace]);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isPending && onOpenChange(next)}>
@@ -349,9 +383,13 @@ export function RoutineRunVariablesDialog({
                   const project = projects.find((entry) => entry.id === projectId) ?? null;
                   if (projectId) trackRecentProject(projectId);
                   setSelection((current) => ({ ...current, projectId }));
-                  setWorkspaceConfig(buildInitialWorkspaceConfig(project));
+                  setWorkspaceConfig(buildInitialWorkspaceConfig(project, defaultExecutionWorkspace));
                   setWorkspaceConfigValid(true);
-                  setWorkspaceBranchName(null);
+                  setWorkspaceBranchName(
+                    defaultExecutionWorkspace && defaultExecutionWorkspace.projectId === project?.id
+                      ? defaultExecutionWorkspace.branchName
+                      : null,
+                  );
                 }}
                 renderTriggerValue={(option) =>
                   option && selectedProject ? (
