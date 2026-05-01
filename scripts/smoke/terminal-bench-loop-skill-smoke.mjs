@@ -195,6 +195,8 @@ async function main() {
         `- Manifest: ${artifactRoot}/manifest.json`,
         `- Results JSONL: ${artifactRoot}/results.jsonl`,
         `- Harbor raw job folder: ${artifactRoot}/harbor/raw-job`,
+        "- Dispatch config: PAPERCLIP_HARBOR_RUNNER_CONFIG=<omitted - harness/setup no-dispatch smoke>",
+        "- Heartbeat-enabled agents: 0 (harness/setup no-dispatch; not a product signal)",
         "",
         "No benchmark process, Harbor job, model call, or provider call was started.",
       ].join("\n"),
