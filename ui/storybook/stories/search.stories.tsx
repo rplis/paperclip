@@ -7,8 +7,30 @@ import { PageTabBar, type PageTabItem } from "@/components/PageTabBar";
 import { MatchSourceChip } from "@/components/search/MatchSourceChip";
 import { SearchResultRow } from "@/components/search/SearchResultRow";
 import { Tabs } from "@/components/ui/tabs";
-import { Search as SearchIcon } from "lucide-react";
-import { storybookAgents, storybookProjects } from "../fixtures/paperclipData";
+import {
+  Bot,
+  CircleDot,
+  DollarSign,
+  Hexagon,
+  History,
+  Inbox,
+  LayoutDashboard,
+  Plus,
+  Search as SearchIcon,
+  SquarePen,
+  Target,
+} from "lucide-react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { StatusBadge } from "@/components/StatusBadge";
+import { storybookAgents, storybookProjects, storybookIssues } from "../fixtures/paperclipData";
 
 const agentsById = new Map(storybookAgents.map((agent) => [agent.id, agent]));
 const projectsById = new Map(storybookProjects.map((project) => [project.id, project]));
@@ -360,6 +382,113 @@ function SearchPagePreview({
   );
 }
 
+function CommandPaletteWithSearchAll({
+  query,
+  emptyResults = false,
+}: {
+  query: string;
+  emptyResults?: boolean;
+}) {
+  return (
+    <Command className="rounded-md border border-border bg-popover shadow-lg">
+      <CommandInput value={query} readOnly placeholder="Search issues, agents, projects..." />
+      <CommandList className="max-h-none">
+        {emptyResults ? (
+          <CommandEmpty>
+            <span>
+              No quick issue matches. Press{" "}
+              <kbd className="rounded border border-border bg-muted px-1 py-0.5 text-[10px]">↵</kbd>{" "}
+              to <span className="font-medium">search all</span> or keep typing to refine.
+            </span>
+          </CommandEmpty>
+        ) : null}
+        <CommandGroup heading="Search">
+          <CommandItem
+            value="search-all"
+            className="bg-accent/40 border border-accent data-[selected=true]:bg-accent/60"
+          >
+            <SearchIcon className="mr-2 h-4 w-4" />
+            <span className="flex-1 truncate">
+              Search all for <span className="font-semibold">&ldquo;{query}&rdquo;</span>
+            </span>
+            <span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <span>open full search</span>
+              <kbd className="rounded border border-border bg-background px-1 py-0.5 text-[10px]">↵</kbd>
+            </span>
+          </CommandItem>
+        </CommandGroup>
+        <CommandSeparator />
+        <CommandGroup heading="Actions">
+          <CommandItem>
+            <SquarePen className="mr-2 h-4 w-4" />
+            Create new issue
+            <span className="ml-auto text-xs text-muted-foreground">C</span>
+          </CommandItem>
+          <CommandItem>
+            <Plus className="mr-2 h-4 w-4" />
+            Create new agent
+          </CommandItem>
+        </CommandGroup>
+        <CommandSeparator />
+        <CommandGroup heading="Pages">
+          <CommandItem>
+            <LayoutDashboard className="mr-2 h-4 w-4" />
+            Dashboard
+          </CommandItem>
+          <CommandItem>
+            <Inbox className="mr-2 h-4 w-4" />
+            Inbox
+          </CommandItem>
+          <CommandItem>
+            <CircleDot className="mr-2 h-4 w-4" />
+            Issues
+          </CommandItem>
+          <CommandItem>
+            <Target className="mr-2 h-4 w-4" />
+            Goals
+          </CommandItem>
+          <CommandItem>
+            <Bot className="mr-2 h-4 w-4" />
+            Agents
+          </CommandItem>
+          <CommandItem>
+            <DollarSign className="mr-2 h-4 w-4" />
+            Costs
+          </CommandItem>
+          <CommandItem>
+            <History className="mr-2 h-4 w-4" />
+            Activity
+          </CommandItem>
+        </CommandGroup>
+        {!emptyResults ? (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Issues">
+              {storybookIssues.slice(0, 3).map((issue) => (
+                <CommandItem key={issue.id}>
+                  <CircleDot className="mr-2 h-4 w-4" />
+                  <span className="mr-2 font-mono text-xs text-muted-foreground">{issue.identifier}</span>
+                  <span className="flex-1 truncate">{issue.title}</span>
+                  <StatusBadge status={issue.status} />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        ) : null}
+        <CommandSeparator />
+        <CommandGroup heading="Projects">
+          {storybookProjects.slice(0, 2).map((project) => (
+            <CommandItem key={project.id}>
+              <Hexagon className="mr-2 h-4 w-4" />
+              {project.name}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      </CommandList>
+    </Command>
+  );
+}
+
 function SearchStories() {
   return (
     <div className="paperclip-story">
@@ -416,6 +545,27 @@ function SearchStories() {
             <MatchSourceChip kind="comment" count={3} />
             <MatchSourceChip kind="document" />
             <MatchSourceChip kind="document" count={2} label="Doc" />
+          </div>
+        </section>
+
+        <section className="paperclip-story__frame overflow-hidden p-4">
+          <div className="paperclip-story__title-block">
+            <div className="paperclip-story__label">Cmd+K palette</div>
+            <h2 className="mt-1 text-lg font-semibold">Search-all row with quick results</h2>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                With quick issue matches
+              </div>
+              <CommandPaletteWithSearchAll query="auth flake" />
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                Empty results — Enter routes to /search
+              </div>
+              <CommandPaletteWithSearchAll query="ghostbuster" emptyResults />
+            </div>
           </div>
         </section>
 
