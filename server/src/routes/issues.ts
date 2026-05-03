@@ -8,6 +8,7 @@ import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
   cancelIssueThreadInteractionSchema,
+  companySearchQuerySchema,
   createIssueAttachmentMetadataSchema,
   createIssueThreadInteractionSchema,
   createIssueWorkProductSchema,
@@ -41,6 +42,7 @@ import {
   accessService,
   agentService,
   companyService,
+  companySearchService,
   executionWorkspaceService,
   goalService,
   heartbeatService,
@@ -456,6 +458,7 @@ export function issueRoutes(
   });
   const feedback = feedbackService(db);
   const companiesSvc = companyService(db);
+  const searchSvc = companySearchService(db);
   const instanceSettings = instanceSettingsService(db);
   const agentsSvc = agentService(db);
   const projectsSvc = projectService(db);
@@ -942,6 +945,14 @@ export function issueRoutes(
     res.status(400).json({
       error: "Missing companyId in path. Use /api/companies/{companyId}/issues.",
     });
+  });
+
+  router.get("/companies/:companyId/search", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const query = companySearchQuerySchema.parse(req.query);
+    const result = await searchSvc.search(companyId, query);
+    res.json(result);
   });
 
   router.get("/companies/:companyId/issues", async (req, res) => {
