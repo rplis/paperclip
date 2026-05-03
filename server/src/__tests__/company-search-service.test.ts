@@ -108,6 +108,32 @@ describeEmbeddedPostgres("companySearchService", () => {
     return id;
   }
 
+  async function createAgent(companyId: string, values: Partial<typeof agents.$inferInsert> = {}) {
+    const id = values.id ?? randomUUID();
+    await db.insert(agents).values({
+      id,
+      companyId,
+      name: values.name ?? "Search agent",
+      role: values.role ?? "engineer",
+      title: values.title ?? null,
+      capabilities: values.capabilities ?? null,
+      ...values,
+    });
+    return id;
+  }
+
+  async function createProject(companyId: string, values: Partial<typeof projects.$inferInsert> = {}) {
+    const id = values.id ?? randomUUID();
+    await db.insert(projects).values({
+      id,
+      companyId,
+      name: values.name ?? "Search project",
+      description: values.description ?? null,
+      ...values,
+    });
+    return id;
+  }
+
   it("ranks exact issue identifiers before weaker title matches", async () => {
     const companyId = await createCompany();
     const exactId = await createIssue(companyId, {
@@ -196,6 +222,171 @@ describeEmbeddedPostgres("companySearchService", () => {
     const result = await svc.search(companyId, companySearchQuerySchema.parse({ q: "needle" }));
 
     expect(result.results.map((item) => item.id)).toEqual([visibleId]);
+  });
+
+  it("treats bare SQL wildcard characters as literals instead of match-all queries", async () => {
+    const companyId = await createCompany();
+    const issueId = await createIssue(companyId, {
+      identifier: "TST-20",
+      title: "Plain issue target",
+      description: "Plain issue description",
+    });
+    await db.insert(issueComments).values({
+      companyId,
+      issueId,
+      body: "Plain comment body",
+    });
+    const documentId = randomUUID();
+    await db.insert(documents).values({
+      id: documentId,
+      companyId,
+      title: "Plain document",
+      latestBody: "Plain document body",
+      format: "markdown",
+    });
+    await db.insert(issueDocuments).values({
+      companyId,
+      issueId,
+      documentId,
+      key: "plain",
+    });
+    await createAgent(companyId, {
+      name: "Plain Agent",
+      role: "engineer",
+      capabilities: "Plain agent capabilities",
+    });
+    await createProject(companyId, {
+      name: "Plain Project",
+      description: "Plain project description",
+    });
+
+    for (const q of ["%", "_", "\\"]) {
+      const result = await svc.search(companyId, companySearchQuerySchema.parse({ q }));
+      expect(result.results, `q=${q}`).toEqual([]);
+    }
+  });
+
+  it("matches percent characters literally across issue, comment, document, agent, and project results", async () => {
+    const companyId = await createCompany();
+    const issueMatchId = await createIssue(companyId, {
+      identifier: "TST-21",
+      title: "Release 100% checklist",
+    });
+    const issueDecoyId = await createIssue(companyId, {
+      identifier: "TST-22",
+      title: "Release 1000 checklist",
+    });
+    const commentMatchId = await createIssue(companyId, {
+      identifier: "TST-23",
+      title: "Comment literal holder",
+    });
+    const commentDecoyId = await createIssue(companyId, {
+      identifier: "TST-24",
+      title: "Comment decoy holder",
+    });
+    await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: commentMatchId,
+        body: "QA is 100% confident in this result.",
+      },
+      {
+        companyId,
+        issueId: commentDecoyId,
+        body: "QA is 1000 confident in this result.",
+      },
+    ]);
+    const documentMatchIssueId = await createIssue(companyId, {
+      identifier: "TST-25",
+      title: "Document literal holder",
+    });
+    const documentDecoyIssueId = await createIssue(companyId, {
+      identifier: "TST-26",
+      title: "Document decoy holder",
+    });
+    const documentMatchId = randomUUID();
+    const documentDecoyId = randomUUID();
+    await db.insert(documents).values([
+      {
+        id: documentMatchId,
+        companyId,
+        title: "Literal rollout",
+        latestBody: "Ship 100% complete adapter support.",
+        format: "markdown",
+      },
+      {
+        id: documentDecoyId,
+        companyId,
+        title: "Decoy rollout",
+        latestBody: "Ship 1000 complete adapter support.",
+        format: "markdown",
+      },
+    ]);
+    await db.insert(issueDocuments).values([
+      {
+        companyId,
+        issueId: documentMatchIssueId,
+        documentId: documentMatchId,
+        key: "literal",
+      },
+      {
+        companyId,
+        issueId: documentDecoyIssueId,
+        documentId: documentDecoyId,
+        key: "decoy",
+      },
+    ]);
+    const agentMatchId = await createAgent(companyId, {
+      name: "100% Specialist",
+      role: "engineer",
+    });
+    const agentDecoyId = await createAgent(companyId, {
+      name: "1000 Specialist",
+      role: "engineer",
+    });
+    const projectMatchId = await createProject(companyId, {
+      name: "100% Launch Plan",
+    });
+    const projectDecoyId = await createProject(companyId, {
+      name: "1000 Launch Plan",
+    });
+
+    const result = await svc.search(companyId, companySearchQuerySchema.parse({ q: "100%" }));
+    const ids = result.results.map((row) => row.id);
+
+    expect(ids).toEqual(expect.arrayContaining([
+      issueMatchId,
+      commentMatchId,
+      documentMatchIssueId,
+      agentMatchId,
+      projectMatchId,
+    ]));
+    expect(ids).not.toEqual(expect.arrayContaining([
+      issueDecoyId,
+      commentDecoyId,
+      documentDecoyIssueId,
+      agentDecoyId,
+      projectDecoyId,
+    ]));
+  });
+
+  it("escapes underscore and backslash characters in issue phrase and token patterns", async () => {
+    const companyId = await createCompany();
+    const literalId = await createIssue(companyId, {
+      identifier: "TST-27",
+      title: "Literal foo_bar path c:\\tmp",
+    });
+    const decoyId = await createIssue(companyId, {
+      identifier: "TST-28",
+      title: "Decoy fooXbar path c:tmp",
+    });
+
+    for (const q of ["foo_bar", "c:\\tmp"]) {
+      const result = await svc.search(companyId, companySearchQuerySchema.parse({ q, scope: "issues" }));
+      const ids = result.results.map((row) => row.id);
+      expect(ids, `q=${q}`).toContain(literalId);
+      expect(ids, `q=${q}`).not.toContain(decoyId);
+    }
   });
 
   it("uses pg_trgm for conservative fuzzy title matches", async () => {

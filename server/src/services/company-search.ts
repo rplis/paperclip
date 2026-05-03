@@ -60,11 +60,15 @@ function normalizeQuery(query: string) {
   return query.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 function tokenizeQuery(normalizedQuery: string) {
   const matches = normalizedQuery.match(/"[^"]+"|[^\s]+/g) ?? [];
   const tokens: string[] = [];
   for (const match of matches) {
-    const token = match.replace(/^"|"$/g, "").replace(/^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu, "");
+    const token = match.replace(/^"|"$/g, "").replace(/^[^\p{L}\p{N}%_\\-]+|[^\p{L}\p{N}%_\\-]+$/gu, "");
     if (token.length < MIN_TOKEN_LENGTH) continue;
     if (!tokens.includes(token)) tokens.push(token);
     if (tokens.length >= COMPANY_SEARCH_MAX_TOKENS) break;
@@ -86,7 +90,7 @@ function tokenMatchExpression(textExpression: SQL, tokenArray: SQL) {
     EXISTS (
       SELECT 1
       FROM unnest(${tokenArray}) AS search_token(value)
-      WHERE lower(coalesce(${textExpression}, '')) LIKE '%' || search_token.value || '%'
+      WHERE lower(coalesce(${textExpression}, '')) LIKE '%' || search_token.value || '%' ESCAPE '\\'
     )
   `;
 }
@@ -269,7 +273,7 @@ function scoreSimpleRow(row: SimpleSearchRow, normalizedQuery: string, tokens: s
 }
 
 function simpleTextCondition(fields: SQL[], containsPattern: string, tokenArray: SQL) {
-  const phraseConditions = fields.map((field) => sql<boolean>`lower(coalesce(${field}, '')) LIKE ${containsPattern}`);
+  const phraseConditions = fields.map((field) => sql<boolean>`lower(coalesce(${field}, '')) LIKE ${containsPattern} ESCAPE '\\'`);
   const tokenConditions = fields.map((field) => tokenMatchExpression(field, tokenArray));
   return sql<boolean>`(${sql.join([...phraseConditions, ...tokenConditions], sql` OR `)})`;
 }
@@ -308,19 +312,21 @@ export function companySearchService(db: Db) {
         .then((rows) => rows[0] ?? null);
       const prefix = routePrefix(company?.issuePrefix);
       const fetchLimit = companySearchBranchFetchLimit(limit);
-      const tokenArray = sqlTextArray(tokens);
+      const escapedTokens = tokens.map(escapeLikePattern);
+      const tokenArray = sqlTextArray(escapedTokens);
       const fuzzyTokens = fuzzyEligibleTokens(tokens);
       const fuzzyTokenArray = sqlTextArray(fuzzyTokens);
-      const containsPattern = `%${normalizedQuery}%`;
-      const startsWithPattern = `${normalizedQuery}%`;
-      const fuzzyEnabled = normalizedQuery.length >= MIN_FUZZY_QUERY_LENGTH;
+      const escapedQuery = escapeLikePattern(normalizedQuery);
+      const containsPattern = `%${escapedQuery}%`;
+      const startsWithPattern = `${escapedQuery}%`;
+      const fuzzyEnabled = normalizedQuery.length >= MIN_FUZZY_QUERY_LENGTH && !/[\\%_]/.test(normalizedQuery);
       const fuzzyTokensEnabled = fuzzyEnabled && fuzzyTokens.length > 0;
 
-      const titlePhraseMatch = sql<boolean>`lower(${issues.title}) LIKE ${containsPattern}`;
-      const titleStartsWith = sql<boolean>`lower(${issues.title}) LIKE ${startsWithPattern}`;
-      const identifierPhraseMatch = sql<boolean>`lower(coalesce(${issues.identifier}, '')) LIKE ${containsPattern}`;
-      const identifierStartsWith = sql<boolean>`lower(coalesce(${issues.identifier}, '')) LIKE ${startsWithPattern}`;
-      const descriptionPhraseMatch = sql<boolean>`lower(coalesce(${issues.description}, '')) LIKE ${containsPattern}`;
+      const titlePhraseMatch = sql<boolean>`lower(${issues.title}) LIKE ${containsPattern} ESCAPE '\\'`;
+      const titleStartsWith = sql<boolean>`lower(${issues.title}) LIKE ${startsWithPattern} ESCAPE '\\'`;
+      const identifierPhraseMatch = sql<boolean>`lower(coalesce(${issues.identifier}, '')) LIKE ${containsPattern} ESCAPE '\\'`;
+      const identifierStartsWith = sql<boolean>`lower(coalesce(${issues.identifier}, '')) LIKE ${startsWithPattern} ESCAPE '\\'`;
+      const descriptionPhraseMatch = sql<boolean>`lower(coalesce(${issues.description}, '')) LIKE ${containsPattern} ESCAPE '\\'`;
       const titleTokenMatch = tokenMatchExpression(sql`${issues.title}`, tokenArray);
       const identifierTokenMatch = tokenMatchExpression(sql`${issues.identifier}`, tokenArray);
       const descriptionTokenMatch = tokenMatchExpression(sql`${issues.description}`, tokenArray);
@@ -339,7 +345,7 @@ export function companySearchService(db: Db) {
           WHERE search_comments.company_id = ${companyId}
             AND search_comments.issue_id = issues.id
             AND (
-              lower(search_comments.body) LIKE ${containsPattern}
+              lower(search_comments.body) LIKE ${containsPattern} ESCAPE '\\'
               OR ${tokenMatchExpression(sql`search_comments.body`, tokenArray)}
             )
         )
@@ -354,8 +360,8 @@ export function companySearchService(db: Db) {
             AND search_documents.company_id = ${companyId}
             AND search_issue_documents.issue_id = issues.id
             AND (
-              lower(coalesce(search_documents.title, '')) LIKE ${containsPattern}
-              OR lower(search_documents.latest_body) LIKE ${containsPattern}
+              lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} ESCAPE '\\'
+              OR lower(search_documents.latest_body) LIKE ${containsPattern} ESCAPE '\\'
               OR ${tokenMatchExpression(sql`search_documents.title`, tokenArray)}
               OR ${tokenMatchExpression(sql`search_documents.latest_body`, tokenArray)}
             )
@@ -399,15 +405,15 @@ export function companySearchService(db: Db) {
         (
           SELECT count(*)::int
           FROM unnest(${tokenArray}) AS search_token(value)
-          WHERE lower(${issues.title}) LIKE '%' || search_token.value || '%'
-            OR lower(coalesce(${issues.identifier}, '')) LIKE '%' || search_token.value || '%'
-            OR lower(coalesce(${issues.description}, '')) LIKE '%' || search_token.value || '%'
+          WHERE lower(${issues.title}) LIKE '%' || search_token.value || '%' ESCAPE '\\'
+            OR lower(coalesce(${issues.identifier}, '')) LIKE '%' || search_token.value || '%' ESCAPE '\\'
+            OR lower(coalesce(${issues.description}, '')) LIKE '%' || search_token.value || '%' ESCAPE '\\'
             OR EXISTS (
               SELECT 1
               FROM issue_comments coverage_comments
               WHERE coverage_comments.company_id = ${companyId}
                 AND coverage_comments.issue_id = issues.id
-                AND lower(coverage_comments.body) LIKE '%' || search_token.value || '%'
+                AND lower(coverage_comments.body) LIKE '%' || search_token.value || '%' ESCAPE '\\'
             )
             OR EXISTS (
               SELECT 1
@@ -418,8 +424,8 @@ export function companySearchService(db: Db) {
                 AND coverage_documents.company_id = ${companyId}
                 AND coverage_issue_documents.issue_id = issues.id
                 AND (
-                  lower(coalesce(coverage_documents.title, '')) LIKE '%' || search_token.value || '%'
-                  OR lower(coverage_documents.latest_body) LIKE '%' || search_token.value || '%'
+                  lower(coalesce(coverage_documents.title, '')) LIKE '%' || search_token.value || '%' ESCAPE '\\'
+                  OR lower(coverage_documents.latest_body) LIKE '%' || search_token.value || '%' ESCAPE '\\'
                 )
             )
         )
@@ -477,11 +483,11 @@ export function companySearchService(db: Db) {
                 WHERE search_comments.company_id = ${companyId}
                   AND search_comments.issue_id = issues.id
                   AND (
-                    lower(search_comments.body) LIKE ${containsPattern}
+                    lower(search_comments.body) LIKE ${containsPattern} ESCAPE '\\'
                     OR ${tokenMatchExpression(sql`search_comments.body`, tokenArray)}
                   )
                 ORDER BY
-                  CASE WHEN lower(search_comments.body) LIKE ${containsPattern} THEN 0 ELSE 1 END,
+                  CASE WHEN lower(search_comments.body) LIKE ${containsPattern} ESCAPE '\\' THEN 0 ELSE 1 END,
                   search_comments.updated_at DESC,
                   search_comments.id DESC
                 LIMIT 1
@@ -494,11 +500,11 @@ export function companySearchService(db: Db) {
                 WHERE search_comments.company_id = ${companyId}
                   AND search_comments.issue_id = issues.id
                   AND (
-                    lower(search_comments.body) LIKE ${containsPattern}
+                    lower(search_comments.body) LIKE ${containsPattern} ESCAPE '\\'
                     OR ${tokenMatchExpression(sql`search_comments.body`, tokenArray)}
                   )
                 ORDER BY
-                  CASE WHEN lower(search_comments.body) LIKE ${containsPattern} THEN 0 ELSE 1 END,
+                  CASE WHEN lower(search_comments.body) LIKE ${containsPattern} ESCAPE '\\' THEN 0 ELSE 1 END,
                   search_comments.updated_at DESC,
                   search_comments.id DESC
                 LIMIT 1
@@ -514,15 +520,15 @@ export function companySearchService(db: Db) {
                   AND search_documents.company_id = ${companyId}
                   AND search_issue_documents.issue_id = issues.id
                   AND (
-                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern}
-                    OR lower(search_documents.latest_body) LIKE ${containsPattern}
+                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} ESCAPE '\\'
+                    OR lower(search_documents.latest_body) LIKE ${containsPattern} ESCAPE '\\'
                     OR ${tokenMatchExpression(sql`search_documents.title`, tokenArray)}
                     OR ${tokenMatchExpression(sql`search_documents.latest_body`, tokenArray)}
                   )
                 ORDER BY
                   CASE
-                    WHEN lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} THEN 0
-                    WHEN lower(search_documents.latest_body) LIKE ${containsPattern} THEN 1
+                    WHEN lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} ESCAPE '\\' THEN 0
+                    WHEN lower(search_documents.latest_body) LIKE ${containsPattern} ESCAPE '\\' THEN 1
                     ELSE 2
                   END,
                   search_documents.updated_at DESC,
@@ -540,8 +546,8 @@ export function companySearchService(db: Db) {
                   AND search_documents.company_id = ${companyId}
                   AND search_issue_documents.issue_id = issues.id
                   AND (
-                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern}
-                    OR lower(search_documents.latest_body) LIKE ${containsPattern}
+                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} ESCAPE '\\'
+                    OR lower(search_documents.latest_body) LIKE ${containsPattern} ESCAPE '\\'
                     OR ${tokenMatchExpression(sql`search_documents.title`, tokenArray)}
                     OR ${tokenMatchExpression(sql`search_documents.latest_body`, tokenArray)}
                   )
@@ -559,8 +565,8 @@ export function companySearchService(db: Db) {
                   AND search_documents.company_id = ${companyId}
                   AND search_issue_documents.issue_id = issues.id
                   AND (
-                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern}
-                    OR lower(search_documents.latest_body) LIKE ${containsPattern}
+                    lower(coalesce(search_documents.title, '')) LIKE ${containsPattern} ESCAPE '\\'
+                    OR lower(search_documents.latest_body) LIKE ${containsPattern} ESCAPE '\\'
                     OR ${tokenMatchExpression(sql`search_documents.title`, tokenArray)}
                     OR ${tokenMatchExpression(sql`search_documents.latest_body`, tokenArray)}
                   )
