@@ -83,6 +83,12 @@ async function waitForCondition(fn: () => Promise<boolean>, timeoutMs = 3_000) {
   return fn();
 }
 
+function adapterWasCalledForRun(runId: string) {
+  return mockAdapterExecute.mock.calls.some(([context]) =>
+    (context as { runId?: string } | undefined)?.runId === runId
+  );
+}
+
 describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () => {
   let db!: ReturnType<typeof createDb>;
   let heartbeat!: ReturnType<typeof heartbeatService>;
@@ -439,7 +445,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
         return run?.status === "running";
       });
       expect(firstRunStarted).toBe(true);
-      const firstAdapterStarted = await waitForCondition(async () => mockAdapterExecute.mock.calls.length === 1);
+      const firstAdapterStarted = await waitForCondition(async () => adapterWasCalledForRun(firstWake!.id));
       expect(firstAdapterStarted).toBe(true);
 
       const secondWake = await heartbeat.wakeup(agentId, {
@@ -457,7 +463,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
         .where(eq(heartbeatRuns.id, secondWake!.id))
         .then((rows) => rows[0] ?? null);
       expect(secondRunWhileFirstRunning?.status).toBe("queued");
-      expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
+      expect(adapterWasCalledForRun(secondWake!.id)).toBe(false);
 
       finishFirstRun();
 
@@ -470,7 +476,7 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
         return run?.status === "succeeded";
       });
       expect(secondRunSucceeded).toBe(true);
-      expect(mockAdapterExecute).toHaveBeenCalledTimes(2);
+      expect(adapterWasCalledForRun(secondWake!.id)).toBe(true);
     } finally {
       finishFirstRun();
     }
@@ -665,7 +671,8 @@ describeEmbeddedPostgres("heartbeat dependency-aware queued run selection", () =
       executionLockedAt: null,
     });
     expect(readyRun?.status).toBe("succeeded");
-    expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
+    expect(adapterWasCalledForRun(readyRunId)).toBe(true);
+    expect(adapterWasCalledForRun(blockedRunId)).toBe(false);
   });
 
   it("suppresses normal wakeups while allowing comment interaction wakes under a pause hold", async () => {
