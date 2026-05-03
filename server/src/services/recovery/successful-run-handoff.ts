@@ -100,6 +100,13 @@ function isCorrectiveHandoffRun(run: HeartbeatRunRow) {
     readString(context.wakeReason) === FINISH_SUCCESSFUL_RUN_HANDOFF_REASON;
 }
 
+function isIssueMonitorMaintenanceRun(run: HeartbeatRunRow) {
+  const context = readRecord(run.contextSnapshot);
+  const wakeReason = readString(context.wakeReason);
+  const source = readString(context.source);
+  return Boolean(wakeReason?.startsWith("issue_monitor") || source?.startsWith("issue.monitor"));
+}
+
 function isProductiveSuccessfulRun(input: {
   livenessState: RunLivenessState | null;
   detectedProgressSummary: string | null;
@@ -154,6 +161,7 @@ export function decideSuccessfulRunHandoff(input: {
 
   if (run.status !== "succeeded") return { kind: "skip", reason: "source run did not succeed" };
   if (isCorrectiveHandoffRun(run)) return { kind: "skip", reason: "source run is already a corrective handoff run" };
+  if (isIssueMonitorMaintenanceRun(run)) return { kind: "skip", reason: "issue monitor run owns its own recovery path" };
   if (run.issueCommentStatus === "retry_queued" || run.issueCommentStatus === "retry_exhausted") {
     return { kind: "skip", reason: "missing issue comment retry owns the next action" };
   }

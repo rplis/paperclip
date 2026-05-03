@@ -125,6 +125,22 @@ describe("successful run handoff decision", () => {
     });
   });
 
+  it("does not queue for issue monitor maintenance runs", () => {
+    expect(decide({
+      run: {
+        ...run,
+        contextSnapshot: {
+          issueId: "issue-1",
+          source: "issue.monitor",
+          wakeReason: "issue_monitor_due",
+        },
+      } as any,
+    })).toEqual({
+      kind: "skip",
+      reason: "issue monitor run owns its own recovery path",
+    });
+  });
+
   it("uses a stable one-attempt idempotency key", () => {
     expect(buildFinishSuccessfulRunHandoffIdempotencyKey({
       issueId: "issue-1",
