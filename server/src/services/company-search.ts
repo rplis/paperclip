@@ -3,6 +3,7 @@ import type { SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, companies, issues, projects } from "@paperclipai/db";
 import {
+  COMPANY_SEARCH_MAX_LIMIT,
   COMPANY_SEARCH_MAX_TOKENS,
   type CompanySearchIssueSummary,
   type CompanySearchQuery,
@@ -16,6 +17,7 @@ import {
 const MIN_TOKEN_LENGTH = 2;
 const MIN_FUZZY_QUERY_LENGTH = 4;
 const SNIPPET_MAX_CHARS = 240;
+export const COMPANY_SEARCH_BRANCH_FETCH_LIMIT = COMPANY_SEARCH_MAX_LIMIT + 1;
 
 type IssueSearchRow = {
   id: string;
@@ -259,6 +261,11 @@ function simpleTextCondition(fields: SQL[], containsPattern: string, tokenArray:
   return sql<boolean>`(${sql.join([...phraseConditions, ...tokenConditions], sql` OR `)})`;
 }
 
+export function companySearchBranchFetchLimit(limit: number) {
+  const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : COMPANY_SEARCH_MAX_LIMIT;
+  return Math.min(COMPANY_SEARCH_BRANCH_FETCH_LIMIT, normalizedLimit + 1);
+}
+
 export function companySearchService(db: Db) {
   return {
     search: async (companyId: string, query: CompanySearchQuery): Promise<CompanySearchResponse> => {
@@ -287,7 +294,7 @@ export function companySearchService(db: Db) {
         .where(eq(companies.id, companyId))
         .then((rows) => rows[0] ?? null);
       const prefix = routePrefix(company?.issuePrefix);
-      const fetchLimit = offset + limit + 1;
+      const fetchLimit = companySearchBranchFetchLimit(limit);
       const tokenArray = sqlTextArray(tokens);
       const containsPattern = `%${normalizedQuery}%`;
       const startsWithPattern = `${normalizedQuery}%`;
@@ -526,6 +533,7 @@ export function companySearchService(db: Db) {
           ))
           .orderBy(desc(score), desc(issues.updatedAt), desc(issues.id))
           .limit(fetchLimit)
+          .offset(offset)
         : [];
 
       const simpleCondition = simpleTextCondition([
@@ -547,6 +555,7 @@ export function companySearchService(db: Db) {
           .where(and(eq(agents.companyId, companyId), simpleCondition))
           .orderBy(desc(agents.updatedAt), desc(agents.id))
           .limit(fetchLimit)
+          .offset(offset)
         : [];
 
       const projectCondition = simpleTextCondition([
@@ -565,6 +574,7 @@ export function companySearchService(db: Db) {
           .where(and(eq(projects.companyId, companyId), isNull(projects.archivedAt), projectCondition))
           .orderBy(desc(projects.updatedAt), desc(projects.id))
           .limit(fetchLimit)
+          .offset(offset)
         : [];
 
       const results: CompanySearchResult[] = [
@@ -606,7 +616,7 @@ export function companySearchService(db: Db) {
         return (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");
       });
 
-      const paged = results.slice(offset, offset + limit);
+      const paged = results.slice(0, limit);
       return {
         query: query.q,
         normalizedQuery,
@@ -615,7 +625,7 @@ export function companySearchService(db: Db) {
         offset,
         results: paged,
         countsByType: makeCounts(results),
-        hasMore: results.length > offset + limit,
+        hasMore: results.length > limit,
       };
     },
   };

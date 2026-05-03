@@ -5,7 +5,7 @@ export const COMPANY_SEARCH_MAX_QUERY_LENGTH = 200;
 export const COMPANY_SEARCH_MAX_TOKENS = 8;
 export const COMPANY_SEARCH_DEFAULT_LIMIT = 20;
 export const COMPANY_SEARCH_MAX_LIMIT = 50;
-export const COMPANY_SEARCH_MAX_OFFSET = 5_000;
+export const COMPANY_SEARCH_MAX_OFFSET = 200;
 
 function firstQueryValue(value: unknown): unknown {
   return Array.isArray(value) ? value[0] : value;

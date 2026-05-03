@@ -16,7 +16,11 @@ import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
-import { companySearchService } from "../services/company-search.js";
+import {
+  COMPANY_SEARCH_BRANCH_FETCH_LIMIT,
+  companySearchBranchFetchLimit,
+  companySearchService,
+} from "../services/company-search.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -38,8 +42,16 @@ describe("company search query validation", () => {
 
     expect(parsed.q).toHaveLength(COMPANY_SEARCH_MAX_QUERY_LENGTH);
     expect(parsed.limit).toBe(50);
-    expect(parsed.offset).toBe(5000);
+    expect(parsed.offset).toBe(200);
     expect(parsed.scope).toBe("all");
+  });
+
+  it("keeps the internal per-branch fetch limit independent of high offsets", () => {
+    const lowOffset = companySearchQuerySchema.parse({ q: "needle", limit: "50", offset: "0" });
+    const highOffset = companySearchQuerySchema.parse({ q: "needle", limit: "50", offset: "9000" });
+
+    expect(companySearchBranchFetchLimit(lowOffset.limit)).toBe(COMPANY_SEARCH_BRANCH_FETCH_LIMIT);
+    expect(companySearchBranchFetchLimit(highOffset.limit)).toBe(COMPANY_SEARCH_BRANCH_FETCH_LIMIT);
   });
 });
 
