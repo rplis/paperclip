@@ -95,8 +95,8 @@ function readOptionValue(argv, index, argName) {
 }
 
 function parseNonNegativeInteger(value, argName) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
+  const parsed = Number(value);
+  if (value.trim() === "" || !Number.isInteger(parsed) || parsed < 0) {
     fail(`${argName} must be a non-negative integer. Received "${value}".`);
   }
 
@@ -104,8 +104,8 @@ function parseNonNegativeInteger(value, argName) {
 }
 
 function parsePositiveInteger(value, argName) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  const parsed = Number(value);
+  if (value.trim() === "" || !Number.isInteger(parsed) || parsed < 1) {
     fail(`${argName} must be a positive integer. Received "${value}".`);
   }
 

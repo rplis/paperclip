@@ -36,6 +36,10 @@ function listWorkspacePackages() {
     encoding: "utf8",
   });
 
+  if (result.error) {
+    fail(`Unable to spawn pnpm to list workspace packages: ${result.error.message}`);
+  }
+
   if (result.status !== 0) {
     fail("Unable to list pnpm workspace packages.");
   }
