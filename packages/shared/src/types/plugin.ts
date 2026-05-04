@@ -24,6 +24,7 @@ import type {
   RoutineCatchUpPolicy,
   RoutineConcurrencyPolicy,
   RoutineStatus,
+  IssueSurfaceVisibility,
 } from "../constants.js";
 import type { Agent } from "./agent.js";
 import type { Project } from "./project.js";
@@ -242,7 +243,7 @@ export interface PluginManagedRoutineDeclaration {
   triggers?: Array<Pick<RoutineTrigger, "kind" | "label" | "enabled" | "cronExpression" | "timezone" | "signingMode" | "replayWindowSec">>;
   /** Defaults for issues created by this routine. */
   issueTemplate?: {
-    surfaceVisibility?: "plugin_operation" | "normal";
+    surfaceVisibility?: IssueSurfaceVisibility;
     originId?: string | null;
     billingCode?: string | null;
   };

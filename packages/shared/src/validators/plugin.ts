@@ -21,6 +21,7 @@ import {
   ROUTINE_STATUSES,
   ROUTINE_TRIGGER_KINDS,
   ROUTINE_TRIGGER_SIGNING_MODES,
+  ISSUE_SURFACE_VISIBILITIES,
 } from "../constants.js";
 import { routineVariableSchema } from "./routine.js";
 
@@ -201,7 +202,7 @@ export const pluginManagedRoutineDeclarationSchema = z.object({
     replayWindowSec: z.number().int().min(30).max(86_400).optional().nullable(),
   })).max(20).optional(),
   issueTemplate: z.object({
-    surfaceVisibility: z.enum(["plugin_operation", "normal"]).optional(),
+    surfaceVisibility: z.enum(ISSUE_SURFACE_VISIBILITIES).optional(),
     originId: z.string().trim().max(255).nullable().optional(),
     billingCode: z.string().trim().max(200).nullable().optional(),
   }).optional(),

@@ -1,10 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { PLUGIN_CAPABILITIES } from "../constants.js";
-import { pluginUiSlotDeclarationSchema } from "./plugin.js";
+import { pluginManagedRoutineDeclarationSchema, pluginUiSlotDeclarationSchema } from "./plugin.js";
 
 describe("plugin capability constants", () => {
   it("exposes each capability once", () => {
     expect(new Set(PLUGIN_CAPABILITIES).size).toBe(PLUGIN_CAPABILITIES.length);
+  });
+});
+
+describe("plugin managed routine validators", () => {
+  it("accepts core issue surface visibility values in routine templates", () => {
+    const parsed = pluginManagedRoutineDeclarationSchema.parse({
+      routineKey: "wiki.refresh",
+      title: "Refresh Wiki",
+      issueTemplate: { surfaceVisibility: "default" },
+    });
+
+    expect(parsed.issueTemplate?.surfaceVisibility).toBe("default");
+  });
+
+  it("rejects non-core issue surface visibility values in routine templates", () => {
+    const parsed = pluginManagedRoutineDeclarationSchema.safeParse({
+      routineKey: "wiki.refresh",
+      title: "Refresh Wiki",
+      issueTemplate: { surfaceVisibility: "normal" },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
 
