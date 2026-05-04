@@ -1,37 +1,26 @@
-import { useMemo } from "react";
-import { Bot, Hexagon } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
+import { Bot, FileText, Hexagon, MessageSquare, Quote } from "lucide-react";
 import type { Agent, CompanySearchResult, Project } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { StatusIcon } from "../StatusIcon";
 import { StatusBadge } from "../StatusBadge";
 import { Identity } from "../Identity";
-import { HighlightedText } from "./HighlightedText";
-import { MatchSourceChip, type MatchSourceChipKind } from "./MatchSourceChip";
+import { HighlightedText, type HighlightedTextProps } from "./HighlightedText";
 
-const SNIPPET_FIELD_LABEL: Record<string, string> = {
-  comment: "COMMENT",
-  document: "DOC",
-  identifier: "IDENTIFIER",
-  description: "DESCRIPTION",
-  title: "TITLE",
+type SnippetStyle = {
+  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  label: string;
 };
 
-function deriveChips(matchedFields: string[]): Array<{ kind: MatchSourceChipKind; count?: number }> {
-  const counts = new Map<MatchSourceChipKind, number>();
-  for (const field of matchedFields) {
-    let kind: MatchSourceChipKind | null = null;
-    if (field === "title" || field === "description") kind = "title";
-    else if (field === "identifier") kind = "identifier";
-    else if (field === "comment") kind = "comment";
-    else if (field === "document") kind = "document";
-    if (!kind) continue;
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
-  }
-  const order: MatchSourceChipKind[] = ["title", "identifier", "comment", "document"];
-  return order
-    .filter((kind) => counts.has(kind))
-    .map((kind) => ({ kind, count: counts.get(kind) ?? 1 }));
+const SNIPPET_STYLES: Record<string, SnippetStyle> = {
+  comment: { Icon: MessageSquare, label: "Comment" },
+  document: { Icon: FileText, label: "Doc" },
+  description: { Icon: Quote, label: "Description" },
+};
+
+function snippetStyle(field: string, fallbackLabel: string): SnippetStyle {
+  return SNIPPET_STYLES[field] ?? { Icon: Quote, label: fallbackLabel };
 }
 
 function formatRelativeTime(input: string | null): string {
@@ -70,20 +59,18 @@ export function SearchResultRow({
   isActive,
   className,
 }: SearchResultRowProps) {
-  const chips = useMemo(() => deriveChips(result.matchedFields), [result.matchedFields]);
-
   if (result.type === "agent") {
     return (
       <Link
         to={result.href}
         className={cn(
-          "group flex items-start gap-3 px-3 py-2 hover:bg-accent/40",
+          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40",
           isActive && "bg-accent/40",
           className,
         )}
         data-result-type="agent"
       >
-        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
           <Bot className="h-3 w-3" />
         </span>
         <div className="min-w-0 flex-1">
@@ -91,16 +78,12 @@ export function SearchResultRow({
             <span className="truncate text-sm font-medium">{result.title}</span>
           </div>
           {result.snippet ? (
-            <div className="mt-0.5 flex min-w-0 items-baseline gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                {result.sourceLabel ?? "Agent"}
-              </span>
-              <HighlightedText
-                text={result.snippets[0]?.text ?? result.snippet}
-                highlights={result.snippets[0]?.highlights}
-                className="truncate text-xs text-muted-foreground"
-              />
-            </div>
+            <SnippetLine
+              text={result.snippets[0]?.text ?? result.snippet}
+              highlights={result.snippets[0]?.highlights}
+              field="agent"
+              fallbackLabel={result.sourceLabel ?? "Agent"}
+            />
           ) : null}
         </div>
       </Link>
@@ -112,7 +95,7 @@ export function SearchResultRow({
       <Link
         to={result.href}
         className={cn(
-          "group flex items-start gap-3 px-3 py-2 hover:bg-accent/40",
+          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40",
           isActive && "bg-accent/40",
           className,
         )}
@@ -122,16 +105,12 @@ export function SearchResultRow({
         <div className="min-w-0 flex-1">
           <span className="truncate text-sm font-medium">{result.title}</span>
           {result.snippet ? (
-            <div className="mt-0.5 flex min-w-0 items-baseline gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                {result.sourceLabel ?? "Project"}
-              </span>
-              <HighlightedText
-                text={result.snippets[0]?.text ?? result.snippet}
-                highlights={result.snippets[0]?.highlights}
-                className="truncate text-xs text-muted-foreground"
-              />
-            </div>
+            <SnippetLine
+              text={result.snippets[0]?.text ?? result.snippet}
+              highlights={result.snippets[0]?.highlights}
+              field="project"
+              fallbackLabel={result.sourceLabel ?? "Project"}
+            />
           ) : null}
         </div>
       </Link>
@@ -146,72 +125,57 @@ export function SearchResultRow({
   const projectName = issue.projectId ? projectsById?.get(issue.projectId)?.name ?? null : null;
   const updated = formatRelativeTime(result.updatedAt ?? issue.updatedAt);
   const titleHighlights = result.snippets.find((snippet) => snippet.field === "title")?.highlights;
+  const bodySnippets = result.snippets.filter((snippet) => snippet.field !== "title").slice(0, 2);
 
   return (
     <Link
       to={result.href}
       className={cn(
-        "group flex items-start gap-3 px-3 py-2 hover:bg-accent/40",
+        "group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/40",
         isActive && "bg-accent/40",
         className,
       )}
       data-result-type="issue"
     >
-      <div className="mt-0.5 shrink-0">
+      <div className="mt-1 shrink-0">
         <StatusIcon status={issue.status} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+        <div className="flex min-w-0 items-baseline gap-x-2.5">
           {issue.identifier ? (
-            <span className="font-mono text-xs text-muted-foreground tabular-nums">
+            <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
               {issue.identifier}
             </span>
           ) : null}
           <HighlightedText
             text={issue.title}
             highlights={titleHighlights}
-            className="line-clamp-2 min-w-0 flex-1 text-sm leading-snug"
+            className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug text-foreground"
           />
-          <div className="ml-auto hidden items-center gap-2 sm:flex">
+          <div className="ml-2 hidden shrink-0 items-center gap-2.5 text-xs text-muted-foreground sm:flex">
             <StatusBadge status={issue.status} />
             {assigneeName ? <Identity name={assigneeName} size="sm" /> : null}
             {projectName ? (
-              <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1">
                 <Hexagon className="h-3 w-3" />
                 <span className="max-w-[10ch] truncate">{projectName}</span>
               </span>
             ) : null}
             {updated ? (
-              <span className="text-xs text-muted-foreground tabular-nums">{updated}</span>
+              <span className="tabular-nums">{updated}</span>
             ) : null}
           </div>
         </div>
-        {chips.length > 0 ? (
-          <div className="mt-1 flex flex-wrap items-center gap-1">
-            {chips.map((chip) => (
-              <MatchSourceChip key={chip.kind} kind={chip.kind} count={chip.count} />
-            ))}
-          </div>
-        ) : null}
-        {result.snippets
-          .filter((snippet) => snippet.field !== "title")
-          .slice(0, 2)
-          .map((snippet, index) => (
-            <div
-              key={`${snippet.field}-${index}`}
-              className="mt-1 flex min-w-0 items-baseline gap-2"
-            >
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                {SNIPPET_FIELD_LABEL[snippet.field] ?? snippet.label.toUpperCase()}
-              </span>
-              <HighlightedText
-                text={snippet.text}
-                highlights={snippet.highlights}
-                className="line-clamp-1 truncate text-xs text-muted-foreground"
-              />
-            </div>
-          ))}
-        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
+        {bodySnippets.map((snippet, index) => (
+          <SnippetLine
+            key={`${snippet.field}-${index}`}
+            text={snippet.text}
+            highlights={snippet.highlights}
+            field={snippet.field}
+            fallbackLabel={snippet.label}
+          />
+        ))}
+        <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
           <StatusBadge status={issue.status} />
           {assigneeName ? <span className="truncate">{assigneeName}</span> : null}
           {projectName ? <span className="truncate">· {projectName}</span> : null}
@@ -219,5 +183,27 @@ export function SearchResultRow({
         </div>
       </div>
     </Link>
+  );
+}
+
+interface SnippetLineProps {
+  text: string;
+  highlights?: HighlightedTextProps["highlights"];
+  field: string;
+  fallbackLabel: string;
+}
+
+function SnippetLine({ text, highlights, field, fallbackLabel }: SnippetLineProps) {
+  const { Icon, label } = snippetStyle(field, fallbackLabel);
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-hidden />
+      <span className="sr-only">{label}: </span>
+      <HighlightedText
+        text={text}
+        highlights={highlights}
+        className="line-clamp-1 truncate"
+      />
+    </div>
   );
 }

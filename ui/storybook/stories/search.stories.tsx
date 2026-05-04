@@ -263,7 +263,7 @@ function SearchPagePreview({
 
       {state === "results" ? (
         <div className="flex flex-col">
-          <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between px-4 py-2 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>{response.results.length} results · sorted by relevance</span>
           </div>
           <section aria-label="Issues" className="flex flex-col">
@@ -274,9 +274,9 @@ function SearchPagePreview({
                   {fixtureResults.length}
                 </span>
               }
-              className="border-b border-border bg-muted/30"
+              className="px-4 pt-2 pb-1 text-[11px] tracking-wider text-muted-foreground"
             />
-            <div className="flex flex-col divide-y divide-border">
+            <div className="flex flex-col divide-y divide-border/50">
               {fixtureResults.map((result) => (
                 <SearchResultRow
                   key={result.id}
@@ -287,7 +287,7 @@ function SearchPagePreview({
               ))}
             </div>
           </section>
-          <section aria-label="Agents" className="flex flex-col">
+          <section aria-label="Agents" className="mt-3 flex flex-col border-t border-border">
             <IssueGroupHeader
               label="Agents"
               trailing={
@@ -295,15 +295,15 @@ function SearchPagePreview({
                   {fixtureAgents.length}
                 </span>
               }
-              className="border-b border-border bg-muted/30"
+              className="px-4 pt-2 pb-1 text-[11px] tracking-wider text-muted-foreground"
             />
-            <div className="flex flex-col divide-y divide-border">
+            <div className="flex flex-col divide-y divide-border/50">
               {fixtureAgents.map((result) => (
                 <SearchResultRow key={result.id} result={result} />
               ))}
             </div>
           </section>
-          <section aria-label="Projects" className="flex flex-col">
+          <section aria-label="Projects" className="mt-3 flex flex-col border-t border-border">
             <IssueGroupHeader
               label="Projects"
               trailing={
@@ -311,9 +311,9 @@ function SearchPagePreview({
                   {fixtureProjects.length}
                 </span>
               }
-              className="border-b border-border bg-muted/30"
+              className="px-4 pt-2 pb-1 text-[11px] tracking-wider text-muted-foreground"
             />
-            <div className="flex flex-col divide-y divide-border">
+            <div className="flex flex-col divide-y divide-border/50">
               {fixtureProjects.map((result) => (
                 <SearchResultRow key={result.id} result={result} />
               ))}

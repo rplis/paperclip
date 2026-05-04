@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -593,16 +594,20 @@ function SearchTabContent({
 
   return (
     <div className="flex flex-col" data-testid="search-results">
-      <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between px-4 py-2 text-[11px] uppercase tracking-wide text-muted-foreground">
         <span>
           {totalResults === 1 ? "1 result" : `${totalResults} results`} · sorted by relevance
         </span>
-        {isFetching ? <span aria-live="polite">Updating…</span> : null}
+        {isFetching ? <span aria-live="polite" className="normal-case tracking-normal">Updating…</span> : null}
       </div>
       <div className="flex flex-col">
         {scope === "all" ? (
-          subgroups.map((group) => (
-            <section key={group.key} aria-label={SUBGROUP_LABELS[group.key]} className="flex flex-col">
+          subgroups.map((group, groupIndex) => (
+            <section
+              key={group.key}
+              aria-label={SUBGROUP_LABELS[group.key]}
+              className={cn("flex flex-col", groupIndex > 0 && "mt-3 border-t border-border")}
+            >
               <IssueGroupHeader
                 label={SUBGROUP_LABELS[group.key]}
                 trailing={
@@ -610,9 +615,9 @@ function SearchTabContent({
                     {group.results.length}
                   </span>
                 }
-                className="border-b border-border bg-muted/30"
+                className="px-4 pt-2 pb-1 text-[11px] tracking-wider text-muted-foreground"
               />
-              <div className="flex flex-col divide-y divide-border">
+              <div className="flex flex-col divide-y divide-border/50">
                 {group.results.map((result) => (
                   <SearchResultRow
                     key={`${result.type}:${result.id}:${result.href}`}
@@ -625,7 +630,7 @@ function SearchTabContent({
             </section>
           ))
         ) : (
-          <div className="flex flex-col divide-y divide-border">
+          <div className="flex flex-col divide-y divide-border/50">
             {subgroups
               .flatMap((group) => group.results)
               .map((result) => (
