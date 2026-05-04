@@ -1751,6 +1751,21 @@ export async function recordPaperclipDistillationOutcome(ctx: PluginContext, inp
     ],
   );
 
+  const workItemStatus = input.status === "succeeded" ? "done" : input.status;
+  await ctx.db.execute(
+    `UPDATE ${distillationWorkItemTable(ctx)} item
+        SET status = $4,
+            updated_at = now()
+       FROM ${distillationRunTable(ctx)} run
+      WHERE item.company_id = $1
+        AND item.wiki_id = $2
+        AND run.company_id = $1
+        AND run.wiki_id = $2
+        AND run.id = $3
+        AND run.work_item_id = item.id`,
+    [input.companyId, wikiId, input.runId, workItemStatus],
+  );
+
   if (input.status === "succeeded" && input.cursorId && input.sourceHash && input.sourceWindowEnd) {
     await ctx.db.execute(
       `UPDATE ${distillationCursorTable(ctx)}
@@ -3469,6 +3484,9 @@ export async function getDistillationOverview(ctx: PluginContext, input: {
   }));
 
   const reviewWorkItems = workItems.filter((item) => item.status === "review_required" || item.workItemKind === "review");
+  const reviewRuns = runs.filter((run) => run.status === "review_required");
+  const reviewRunWorkItemIds = new Set(reviewRuns.map((run) => run.workItemId).filter((id): id is string => typeof id === "string" && id.length > 0));
+  const standaloneReviewWorkItems = reviewWorkItems.filter((item) => !reviewRunWorkItemIds.has(item.id));
   const failedSince = Date.now() - 24 * 60 * 60 * 1000;
   const failedRuns24h = runs.filter((run) => {
     if (run.status !== "failed" && run.status !== "refused_cost_cap") return false;
@@ -3486,7 +3504,7 @@ export async function getDistillationOverview(ctx: PluginContext, input: {
       cursors: cursors.length,
       runningRuns: runs.filter((run) => run.status === "running").length,
       failedRuns24h,
-      reviewRequired: reviewWorkItems.length,
+      reviewRequired: reviewRuns.length + standaloneReviewWorkItems.length,
     },
   };
 }

@@ -1606,6 +1606,17 @@ Route sidebar state stays attached to the selected wiki page.
       result.workItem.workItemId,
       project.id,
     ]));
+    const workItemReviewUpdate = harness.dbExecutes.find((execute) =>
+      execute.sql.trim().startsWith("UPDATE")
+      && execute.sql.includes("paperclip_distillation_work_items")
+      && execute.sql.includes("paperclip_distillation_runs")
+      && execute.params?.[3] === "review_required");
+    expect(workItemReviewUpdate?.params).toEqual(expect.arrayContaining([
+      COMPANY_ID,
+      "default",
+      expect.any(String),
+      "review_required",
+    ]));
   });
 
   it("backfills only the selected Paperclip project and date window", async () => {
