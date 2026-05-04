@@ -176,6 +176,20 @@ That means:
 
 See [doc/RELEASE-AUTOMATION-SETUP.md](RELEASE-AUTOMATION-SETUP.md) for the GitHub/npm setup steps.
 
+## Release enrollment for new public packages
+
+Paperclip does not auto-publish every non-private workspace package anymore.
+CI publishing is controlled by [`scripts/release-package-manifest.json`](../scripts/release-package-manifest.json).
+
+When you add a new public package:
+
+1. add it to the manifest and decide whether CI should publish it immediately
+2. if CI should publish it, bootstrap the package on npm before merge
+3. if CI should not publish it yet, keep `"publishFromCi": false`
+4. only enable `"publishFromCi": true` after npm trusted publishing is configured for that package
+
+PR CI now checks changed release-enabled package manifests against npm. That catches a missing first-publish bootstrap before the change reaches `master`.
+
 ## Rollback model
 
 Rollback does not unpublish anything.
