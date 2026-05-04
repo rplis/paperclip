@@ -1430,6 +1430,12 @@ Route sidebar state stays attached to the selected wiki page.
     });
     await harness.performAction("create-paperclip-distillation-work-item", {
       companyId: COMPANY_ID,
+      kind: "manual",
+      projectId: "77777777-7777-4777-8777-777777777777",
+      idempotencyKey: "manual:project:77777777-7777-4777-8777-777777777777",
+    });
+    await harness.performAction("create-paperclip-distillation-work-item", {
+      companyId: COMPANY_ID,
       kind: "retry",
       rootIssueId: "77777777-7777-4777-8777-777777777781",
       priority: "high",
@@ -1450,12 +1456,13 @@ Route sidebar state stays attached to the selected wiki page.
     });
 
     const workItemWrites = harness.dbExecutes.filter((execute) => execute.sql.includes("paperclip_distillation_work_items"));
-    expect(workItemWrites).toHaveLength(4);
-    expect(workItemWrites.map((write) => write.params?.[3])).toEqual(["manual", "retry", "backfill", "manual"]);
+    expect(workItemWrites).toHaveLength(5);
+    expect(workItemWrites.map((write) => write.params?.[3])).toEqual(["manual", "manual", "retry", "backfill", "manual"]);
+    expect(workItemWrites[1].params?.[0]).toBe(workItemWrites[0].params?.[0]);
     expect(String(workItemWrites[0].params?.[9])).toContain('"sourceScope":"project"');
-    expect(String(workItemWrites[1].params?.[9])).toContain('"sourceScope":"root_issue"');
-    expect(String(workItemWrites[2].params?.[9])).toContain('"sourceScope":"project"');
-    expect(workItemWrites[3].params?.[8]).toBe("manual:project:77777777-7777-4777-8777-777777777780");
+    expect(String(workItemWrites[2].params?.[9])).toContain('"sourceScope":"root_issue"');
+    expect(String(workItemWrites[3].params?.[9])).toContain('"sourceScope":"project"');
+    expect(workItemWrites[4].params?.[8]).toBe("manual:project:77777777-7777-4777-8777-777777777780");
 
     await expect(harness.performAction("create-paperclip-distillation-work-item", {
       companyId: COMPANY_ID,
