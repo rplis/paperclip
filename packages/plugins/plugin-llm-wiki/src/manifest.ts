@@ -132,6 +132,7 @@ const manifest: PaperclipPluginManifestV1 = {
         "wiki",
         "wiki/sources",
         "wiki/projects",
+        "wiki/areas",
         "wiki/entities",
         "wiki/concepts",
         "wiki/synthesis"

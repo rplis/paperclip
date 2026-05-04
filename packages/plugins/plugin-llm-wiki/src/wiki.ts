@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Agent, AgentSessionEvent, Issue, IssueComment, PluginContext, PluginEvent, PluginLocalFolderEntry, Project, ToolResult } from "@paperclipai/plugin-sdk";
-import type { IssueDocument, PluginIssueOriginKind, PluginManagedRoutineResolution } from "@paperclipai/plugin-sdk/types";
+import type { Agent, AgentSessionEvent, Issue, PluginContext, PluginEvent, PluginLocalFolderEntry, Project, ToolResult } from "@paperclipai/plugin-sdk";
+import type { PluginIssueOriginKind, PluginManagedRoutineResolution } from "@paperclipai/plugin-sdk/types";
 import {
   DEFAULT_MAX_SOURCE_BYTES,
   DEFAULT_MAX_PAPERCLIP_CURSOR_WINDOW_CHARS,
@@ -2355,11 +2355,6 @@ export async function distillPaperclipProjectPage(ctx: PluginContext, input: Pap
   };
 }
 
-function truncateEventSource(contents: string, maxCharacters: number): string {
-  if (contents.length <= maxCharacters) return contents;
-  return `${contents.slice(0, maxCharacters)}\n\n[Truncated by LLM Wiki event ingestion policy at ${maxCharacters} characters.]\n`;
-}
-
 function eventPayload(event: PluginEvent): Record<string, unknown> {
   return event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
     ? event.payload as Record<string, unknown>
@@ -2368,82 +2363,6 @@ function eventPayload(event: PluginEvent): Record<string, unknown> {
 
 function sourceTitleForIssue(issue: Issue): string {
   return issue.identifier ? `${issue.identifier} ${issue.title}` : issue.title;
-}
-
-function rawPathForPaperclipEvent(input: {
-  sourceKind: WikiEventIngestionSource;
-  issue: Issue;
-  label: string;
-  contents: string;
-  event: PluginEvent;
-}): string {
-  const identifier = input.issue.identifier ?? input.issue.id.slice(0, 8);
-  const eventDate = input.event.occurredAt.slice(0, 10);
-  return assertRawPath(`raw/paperclip/${input.sourceKind}/${eventDate}-${slugify(identifier)}-${slugify(input.label)}-${contentHash(input.contents).slice(0, 8)}.md`);
-}
-
-function formatIssueEventSource(issue: Issue, event: PluginEvent, maxCharacters: number): string {
-  return truncateEventSource([
-    `# Paperclip issue: ${sourceTitleForIssue(issue)}`,
-    "",
-    "## Provenance",
-    "",
-    `- Company ID: ${issue.companyId}`,
-    `- Issue ID: ${issue.id}`,
-    issue.identifier ? `- Issue identifier: ${issue.identifier}` : null,
-    `- Event type: ${event.eventType}`,
-    `- Event ID: ${event.eventId}`,
-    `- Event occurred at: ${event.occurredAt}`,
-    `- Status: ${issue.status}`,
-    `- Priority: ${issue.priority}`,
-    "",
-    "## Issue",
-    "",
-    issue.description?.trim() ? issue.description.trim() : "_No issue description._",
-  ].filter((line): line is string => line !== null).join("\n"), maxCharacters);
-}
-
-function formatCommentEventSource(issue: Issue, comment: IssueComment, event: PluginEvent, maxCharacters: number): string {
-  return truncateEventSource([
-    `# Paperclip comment on ${sourceTitleForIssue(issue)}`,
-    "",
-    "## Provenance",
-    "",
-    `- Company ID: ${issue.companyId}`,
-    `- Issue ID: ${issue.id}`,
-    issue.identifier ? `- Issue identifier: ${issue.identifier}` : null,
-    `- Comment ID: ${comment.id}`,
-    `- Event type: ${event.eventType}`,
-    `- Event ID: ${event.eventId}`,
-    `- Event occurred at: ${event.occurredAt}`,
-    "",
-    "## Comment",
-    "",
-    comment.body,
-  ].filter((line): line is string => line !== null).join("\n"), maxCharacters);
-}
-
-function formatDocumentEventSource(issue: Issue, document: IssueDocument, event: PluginEvent, maxCharacters: number): string {
-  return truncateEventSource([
-    `# Paperclip document: ${document.title ?? document.key}`,
-    "",
-    "## Provenance",
-    "",
-    `- Company ID: ${issue.companyId}`,
-    `- Issue ID: ${issue.id}`,
-    issue.identifier ? `- Issue identifier: ${issue.identifier}` : null,
-    `- Document ID: ${document.id}`,
-    `- Document key: ${document.key}`,
-    `- Event type: ${event.eventType}`,
-    `- Event ID: ${event.eventId}`,
-    `- Event occurred at: ${event.occurredAt}`,
-    `- Format: ${document.format}`,
-    `- Revision: ${document.latestRevisionNumber}`,
-    "",
-    "## Document",
-    "",
-    document.body,
-  ].filter((line): line is string => line !== null).join("\n"), maxCharacters);
 }
 
 async function recordPaperclipCursorObservation(ctx: PluginContext, input: {

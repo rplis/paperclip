@@ -511,6 +511,16 @@ describe("LLM Wiki plugin scaffold", () => {
       exportName: "WikiRouteSidebar",
       routePath: "wiki",
     });
+    expect(manifest.localFolders?.[0]?.requiredDirectories).toEqual([
+      "raw",
+      "wiki",
+      "wiki/sources",
+      "wiki/projects",
+      "wiki/areas",
+      "wiki/entities",
+      "wiki/concepts",
+      "wiki/synthesis",
+    ]);
     expect(packageJson.dependencies).toBeUndefined();
     expect(packageJson.devDependencies?.react).toBeUndefined();
     expect(packageJson.devDependencies?.["react-dom"]).toBeDefined();

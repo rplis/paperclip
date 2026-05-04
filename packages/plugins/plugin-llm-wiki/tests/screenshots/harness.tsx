@@ -23,7 +23,7 @@ const FOLDER_HEALTHY = {
   access: "readWrite" as const,
   readable: true,
   writable: true,
-  requiredDirectories: ["raw", "wiki", "wiki/sources", "wiki/projects", "wiki/entities", "wiki/concepts", "wiki/synthesis"],
+  requiredDirectories: ["raw", "wiki", "wiki/sources", "wiki/projects", "wiki/areas", "wiki/entities", "wiki/concepts", "wiki/synthesis"],
   requiredFiles: ["AGENTS.md", "IDEA.md", "wiki/index.md", "wiki/log.md"],
   missingDirectories: [],
   missingFiles: [],
