@@ -93,6 +93,7 @@ const mockEnvironmentService = vi.hoisted(() => ({}));
 
 const mockDb = vi.hoisted(() => ({
   select: vi.fn(),
+  execute: vi.fn(),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -197,6 +198,7 @@ describe.sequential("issue goal context routes", () => {
         })),
       })),
     });
+    mockDb.execute.mockResolvedValue([]);
     mockProjectService.getById.mockResolvedValue({
       id: legacyProjectLinkedIssue.projectId,
       companyId: "company-1",
