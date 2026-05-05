@@ -118,7 +118,7 @@ import { cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, PauseCircle, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, Brain, Check, ChevronDown, ClipboardList, Copy, Hammer, Loader2, MoreHorizontal, Paperclip, PauseCircle, Search, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 import { IssueBlockedNotice } from "./IssueBlockedNotice";
 
 interface IssueChatMessageContext {
@@ -262,10 +262,9 @@ interface IssueChatComposerProps {
   composerDisabledReason?: string | null;
   composerHint?: string | null;
   issueStatus?: string;
+  issueWorkMode?: IssueWorkMode;
+  onWorkModeChange?: (workMode: IssueWorkMode) => void;
 }
-
-const ISSUE_WORK_MODE_COMPOSER_HINT =
-  "This issue is in planning mode. Replies should focus on planning before execution, then share verification notes and screenshots as evidence before moving to execution.";
 
 interface IssueChatThreadProps {
   comments: IssueChatComment[];
@@ -308,6 +307,7 @@ interface IssueChatThreadProps {
   mentions?: MentionOption[];
   composerDisabledReason?: string | null;
   composerHint?: string | null;
+  onWorkModeChange?: (workMode: IssueWorkMode) => void;
   showComposer?: boolean;
   showJumpToLatest?: boolean;
   emptyMessage?: string;
@@ -2821,6 +2821,8 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
   composerDisabledReason = null,
   composerHint = null,
   issueStatus,
+  issueWorkMode,
+  onWorkModeChange,
 }, forwardedRef) {
   const api = useAui();
   const toastActions = useOptionalToastActions();
@@ -2833,6 +2835,9 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
   const effectiveSuggestedAssigneeValue = suggestedAssigneeValue ?? currentAssigneeValue;
   const [reassignTarget, setReassignTarget] = useState(effectiveSuggestedAssigneeValue);
   const [unassignedConfirmed, setUnassignedConfirmed] = useState(false);
+  const resolvedIssueWorkMode: IssueWorkMode = issueWorkMode ?? "standard";
+  const [pendingWorkMode, setPendingWorkMode] = useState<IssueWorkMode>(resolvedIssueWorkMode);
+  const canToggleWorkMode = typeof onWorkModeChange === "function";
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<MarkdownEditorRef>(null);
   const composerContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2883,6 +2888,10 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     setUnassignedConfirmed(false);
   }, [reassignTarget]);
 
+  useEffect(() => {
+    setPendingWorkMode(resolvedIssueWorkMode);
+  }, [resolvedIssueWorkMode]);
+
   useImperativeHandle(forwardedRef, () => ({
     focus: focusComposer,
     restoreDraft: (submittedBody: string) => {
@@ -2925,10 +2934,14 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     const submittedBody = trimmed;
     const viewportSnapshot = captureComposerViewportSnapshot(composerContainerRef.current);
 
+    const workModeChanged = pendingWorkMode !== resolvedIssueWorkMode;
     setSubmitting(true);
     setBody("");
     setUnassignedConfirmed(false);
     try {
+      if (workModeChanged && onWorkModeChange) {
+        onWorkModeChange(pendingWorkMode);
+      }
       const appendPromise = api.thread().append({
         role: "user",
         content: [{ type: "text", text: submittedBody }],
@@ -3086,12 +3099,16 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     );
   }
 
+  const isPlanning = pendingWorkMode === "planning";
+
   return (
     <div
       ref={composerContainerRef}
       data-testid="issue-chat-composer"
+      data-pending-work-mode={pendingWorkMode}
       className={cn(
         "relative rounded-md border border-border/70 bg-background/95 p-[15px] shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur transition-[border-color,background-color,box-shadow] duration-150 supports-[backdrop-filter]:bg-background/85 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.28)]",
+        isPlanning && "border-amber-500/60 bg-amber-50/60 supports-[backdrop-filter]:bg-amber-50/40 dark:border-amber-500/50 dark:bg-amber-500/[0.07] dark:supports-[backdrop-filter]:bg-amber-500/[0.07]",
         isDragOver && "border-primary/45 bg-background shadow-[0_-12px_28px_rgba(15,23,42,0.08),0_0_0_1px_hsl(var(--primary)/0.16)]",
       )}
       onDragEnterCapture={handleFileDragEnter}
@@ -3183,25 +3200,56 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
       ) : null}
 
       <div className="flex flex-wrap items-center justify-end gap-3">
-        {(onImageUpload || onAttachImage) ? (
-          <div className="mr-auto flex items-center gap-3">
-            <input
-              ref={attachInputRef}
-              type="file"
-              className="hidden"
-              onChange={handleAttachFile}
-            />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => attachInputRef.current?.click()}
-              disabled={attaching}
-              title="Attach file"
+        <div className="mr-auto flex items-center gap-2">
+          {(onImageUpload || onAttachImage) ? (
+            <>
+              <input
+                ref={attachInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleAttachFile}
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => attachInputRef.current?.click()}
+                disabled={attaching}
+                title="Attach file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+            </>
+          ) : null}
+          {canToggleWorkMode ? (
+            <button
+              type="button"
+              data-testid="issue-chat-composer-work-mode-toggle"
+              data-pending-work-mode={pendingWorkMode}
+              aria-pressed={isPlanning}
+              title={
+                isPlanning
+                  ? "Planning mode is on for this submission. Click to switch to Standard."
+                  : "Click to switch this submission to Planning mode."
+              }
+              onClick={() =>
+                setPendingWorkMode((prev) => (prev === "planning" ? "standard" : "planning"))
+              }
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+                isPlanning
+                  ? "border-amber-500/60 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25"
+                  : "border-border text-muted-foreground hover:bg-accent/50",
+              )}
             >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-          </div>
-        ) : null}
+              {isPlanning ? (
+                <ClipboardList className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Hammer className="h-3.5 w-3.5" aria-hidden />
+              )}
+              <span>{isPlanning ? "Planning" : "Standard"}</span>
+            </button>
+          ) : null}
+        </div>
 
         {enableReassign && reassignOptions.length > 0 ? (
           <InlineEntitySelector
@@ -3306,6 +3354,7 @@ export function IssueChatThread({
   onCancelInteraction,
   composerRef,
   issueWorkMode,
+  onWorkModeChange,
   onRefreshLatestComments,
 }: IssueChatThreadProps) {
   const location = useLocation();
@@ -3915,15 +3964,6 @@ export function IssueChatThread({
             data-testid="issue-chat-composer-dock"
             className="sticky bottom-[calc(env(safe-area-inset-bottom)+20px)] z-20 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 pt-6"
           >
-            {issueWorkMode === "planning" ? (
-              <div
-                data-testid="issue-chat-thread-planning-notice"
-                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300"
-              >
-                <p className="font-medium">Planning mode</p>
-                <p>{ISSUE_WORK_MODE_COMPOSER_HINT}</p>
-              </div>
-            ) : null}
             <IssueChatComposer
               ref={composerRef}
               onImageUpload={imageUploadHandler}
@@ -3938,6 +3978,8 @@ export function IssueChatThread({
               composerDisabledReason={composerDisabledReason}
               composerHint={composerHint}
               issueStatus={issueStatus}
+              issueWorkMode={issueWorkMode}
+              onWorkModeChange={onWorkModeChange}
             />
           </div>
         ) : null}

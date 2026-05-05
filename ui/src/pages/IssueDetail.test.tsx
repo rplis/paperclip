@@ -1149,7 +1149,7 @@ describe("IssueDetail", () => {
     expect(container.textContent).toContain("Planning");
   });
 
-  it("toggles issue work mode from issue detail and calls update", async () => {
+  it("forwards composer work mode changes to the issues API", async () => {
     const issue = createIssue();
     mockIssuesApi.get.mockResolvedValue(issue);
     mockIssuesApi.listAttachments.mockResolvedValue([
@@ -1178,14 +1178,12 @@ describe("IssueDetail", () => {
     await flushReact();
     await flushReact();
 
-    const planningButton = container.querySelector('[data-issue-work-mode="planning"]') as HTMLButtonElement | null;
-    const standardButton = container.querySelector('[data-issue-work-mode="standard"]') as HTMLButtonElement | null;
-    expect(planningButton).not.toBeNull();
-    expect(standardButton).not.toBeNull();
-    expect(standardButton?.disabled).toBe(true);
+    const lastChatThreadProps = mockIssueChatThreadRender.mock.calls.at(-1)?.[0];
+    expect(lastChatThreadProps?.issueWorkMode).toBe("standard");
+    expect(typeof lastChatThreadProps?.onWorkModeChange).toBe("function");
 
     await act(async () => {
-      planningButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      lastChatThreadProps?.onWorkModeChange?.("planning");
     });
     await flushReact();
 

@@ -44,6 +44,8 @@ import {
   ChevronRight,
   ChevronDown,
   CircleDot,
+  ClipboardList,
+  Hammer,
   Minus,
   ArrowUp,
   ArrowDown,
@@ -136,10 +138,14 @@ function isIssueWorkMode(value: unknown): value is IssueWorkMode {
   return value === "standard" || value === "planning";
 }
 
-const ISSUE_WORK_MODE_OPTIONS = [
-  { value: "standard", label: "Standard" },
-  { value: "planning", label: "Planning" },
-] as const;
+const ISSUE_WORK_MODE_OPTIONS: ReadonlyArray<{
+  value: IssueWorkMode;
+  label: string;
+  icon: typeof Hammer;
+}> = [
+  { value: "standard", label: "Standard", icon: Hammer },
+  { value: "planning", label: "Planning", icon: ClipboardList },
+];
 
 function loadDraft(): IssueDraft | null {
   try {
@@ -431,6 +437,7 @@ export function NewIssueDialog() {
   // Popover states
   const [statusOpen, setStatusOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [workModeOpen, setWorkModeOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [companyOpen, setCompanyOpen] = useState(false);
   const descriptionEditorRef = useRef<MarkdownEditorRef>(null);
@@ -1893,24 +1900,56 @@ export function NewIssueDialog() {
             Upload
           </button>
 
-          <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
-            {ISSUE_WORK_MODE_OPTIONS.map((option) => (
+          {/* Work mode chip */}
+          <Popover open={workModeOpen} onOpenChange={setWorkModeOpen}>
+            <PopoverTrigger asChild>
               <button
-                key={option.value}
                 type="button"
-                data-issue-work-mode={option.value}
+                data-issue-work-mode-chip={workMode}
                 className={cn(
-                  "px-2 py-1 text-[11px] transition-colors",
-                  option.value === workMode
-                    ? "bg-accent text-accent-foreground"
-                    : "bg-background text-muted-foreground hover:bg-accent/50",
+                  "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+                  workMode === "planning"
+                    ? "border-amber-500/60 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25"
+                    : "border-border text-muted-foreground hover:bg-accent/50",
                 )}
-                onClick={() => setWorkMode(option.value)}
               >
-                {option.label}
+                {(() => {
+                  const current = ISSUE_WORK_MODE_OPTIONS.find((option) => option.value === workMode)
+                    ?? ISSUE_WORK_MODE_OPTIONS[0]!;
+                  const Icon = current.icon;
+                  return (
+                    <>
+                      <Icon className="h-3 w-3" />
+                      {current.label}
+                    </>
+                  );
+                })()}
               </button>
-            ))}
-          </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-36 p-1" align="start">
+              {ISSUE_WORK_MODE_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.value}
+                    data-issue-work-mode={option.value}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent/50",
+                      option.value === workMode && "bg-accent",
+                      option.value === "planning" && "text-amber-700 dark:text-amber-300",
+                    )}
+                    onClick={() => {
+                      setWorkMode(option.value);
+                      setWorkModeOpen(false);
+                    }}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {option.label}
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
 
           {/* More (dates) */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>

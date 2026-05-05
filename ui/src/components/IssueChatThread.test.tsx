@@ -346,7 +346,7 @@ describe("IssueChatThread", () => {
     });
   });
 
-  it("shows a planning notice in the composer area for planning mode issues", () => {
+  it("renders the composer in planning mode when the issue is in planning mode", () => {
     const root = createRoot(container);
 
     act(() => {
@@ -358,6 +358,7 @@ describe("IssueChatThread", () => {
             timelineEvents={[]}
             liveRuns={[]}
             issueWorkMode="planning"
+            onWorkModeChange={() => {}}
             onAdd={async () => {}}
             enableLiveTranscriptPolling={false}
           />
@@ -365,11 +366,58 @@ describe("IssueChatThread", () => {
       );
     });
 
-    const planningNotice = container.querySelector('[data-testid="issue-chat-thread-planning-notice"]');
-    expect(planningNotice).not.toBeNull();
-    expect(planningNotice?.textContent).toContain("Planning mode");
-    expect(planningNotice?.textContent).toContain("verification");
-    expect(planningNotice?.textContent).toContain("screenshots");
+    const composer = container.querySelector('[data-testid="issue-chat-composer"]');
+    expect(composer).not.toBeNull();
+    expect(composer?.getAttribute("data-pending-work-mode")).toBe("planning");
+    expect(composer?.className).toContain("amber");
+
+    const toggle = container.querySelector(
+      '[data-testid="issue-chat-composer-work-mode-toggle"]',
+    );
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("data-pending-work-mode")).toBe("planning");
+    expect(toggle?.textContent).toContain("Planning");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("toggles the composer work mode for the next submission without changing the issue immediately", () => {
+    const root = createRoot(container);
+    const onWorkModeChange = vi.fn();
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={[]}
+            linkedRuns={[]}
+            timelineEvents={[]}
+            liveRuns={[]}
+            issueWorkMode="standard"
+            onWorkModeChange={onWorkModeChange}
+            onAdd={async () => {}}
+            enableLiveTranscriptPolling={false}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const toggle = container.querySelector(
+      '[data-testid="issue-chat-composer-work-mode-toggle"]',
+    ) as HTMLButtonElement | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("data-pending-work-mode")).toBe("standard");
+
+    act(() => {
+      toggle?.click();
+    });
+
+    expect(onWorkModeChange).not.toHaveBeenCalled();
+    const composer = container.querySelector('[data-testid="issue-chat-composer"]');
+    expect(composer?.getAttribute("data-pending-work-mode")).toBe("planning");
+    expect(composer?.className).toContain("amber");
 
     act(() => {
       root.unmount();

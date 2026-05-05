@@ -187,11 +187,6 @@ const LEAF_WORK_CONTROL_MODE_HELP_TEXT: Partial<Record<IssueTreeControlMode, str
   pause: "Pause active execution on this issue until an explicit resume.",
   resume: "Release the active pause hold so this issue can continue.",
 };
-const ISSUE_WORK_MODE_OPTIONS: ReadonlyArray<{ value: IssueWorkMode; label: string }> = [
-  { value: "standard", label: "Standard" },
-  { value: "planning", label: "Planning" },
-];
-
 function issueTreeControlLabel(mode: IssueTreeControlMode, scope: "leaf" | "subtree") {
   return scope === "leaf"
     ? LEAF_WORK_CONTROL_MODE_LABEL[mode] ?? TREE_CONTROL_MODE_LABEL[mode]
@@ -828,32 +823,6 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-border bg-card/40 p-2">
-        <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
-          {ISSUE_WORK_MODE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              data-issue-work-mode={option.value}
-              aria-pressed={option.value === resolvedWorkMode}
-              disabled={option.value === resolvedWorkMode || !onWorkModeChange}
-              className={cn(
-                "px-2 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                option.value === resolvedWorkMode
-                  ? "bg-accent text-accent-foreground"
-                  : "bg-background text-muted-foreground hover:bg-accent/50",
-              )}
-              onClick={() => {
-                if (option.value === resolvedWorkMode || !onWorkModeChange) return;
-                onWorkModeChange(option.value);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {hasOlderComments ? (
         <div className="flex justify-center">
           <Button
@@ -915,6 +884,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         }
         onCancelInteraction={onCancelInteraction}
         issueWorkMode={resolvedWorkMode}
+        onWorkModeChange={onWorkModeChange}
         onCancelRun={runningIssueRun && onPauseWorkRun
           ? async () => {
               await onPauseWorkRun(runningIssueRun.id);
