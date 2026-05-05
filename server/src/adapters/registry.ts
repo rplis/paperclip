@@ -202,6 +202,14 @@ function dedupeAdapterModels(models: AdapterModel[]): AdapterModel[] {
   return result;
 }
 
+function prefixAdapterModelLabels(models: AdapterModel[], provider: "Claude" | "Codex"): AdapterModel[] {
+  const prefix = `${provider}: `;
+  return models.map((model) => ({
+    ...model,
+    label: model.label.startsWith(prefix) ? model.label : `${prefix}${model.label}`,
+  }));
+}
+
 async function listAcpxModels(): Promise<AdapterModel[]> {
   const [claude, codex] = await Promise.all([
     listClaudeModels().catch(() => claudeModels),
@@ -209,14 +217,8 @@ async function listAcpxModels(): Promise<AdapterModel[]> {
   ]);
   return dedupeAdapterModels([
     ...acpxModels,
-    ...claude.map((model) => ({
-      ...model,
-      label: model.label.startsWith("Claude: ") ? model.label : `Claude: ${model.label}`,
-    })),
-    ...codex.map((model) => ({
-      ...model,
-      label: model.label.startsWith("Codex: ") ? model.label : `Codex: ${model.label}`,
-    })),
+    ...prefixAdapterModelLabels(claude, "Claude"),
+    ...prefixAdapterModelLabels(codex, "Codex"),
   ]);
 }
 
@@ -249,7 +251,10 @@ const acpxLocalAdapter: ServerAdapterModule = {
   syncSkills: syncAcpxSkills,
   sessionCodec: acpxSessionCodec,
   sessionManagement: getAdapterSessionManagement("acpx_local") ?? undefined,
-  models: dedupeAdapterModels([...claudeModels, ...codexModels]),
+  models: dedupeAdapterModels([
+    ...prefixAdapterModelLabels(claudeModels, "Claude"),
+    ...prefixAdapterModelLabels(codexModels, "Codex"),
+  ]),
   listModels: listAcpxModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,

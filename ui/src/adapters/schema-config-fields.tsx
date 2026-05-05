@@ -283,7 +283,7 @@ function getDefaultValue(field: ConfigFieldSchema): unknown {
   }
 }
 
-function fieldMatchesVisibleWhen(
+export function fieldMatchesVisibleWhen(
   field: ConfigFieldSchema,
   readValue: (field: ConfigFieldSchema) => unknown,
   schema: AdapterConfigSchema,
@@ -306,7 +306,7 @@ function fieldMatchesVisibleWhen(
   if (typeof condition.value === "string") return actual === condition.value;
   if (Array.isArray(condition.values)) {
     const values = condition.values.filter((value): value is string => typeof value === "string");
-    return values.length === 0 || values.includes(actual);
+    return values.length > 0 && values.includes(actual);
   }
   if (Array.isArray(condition.notValues)) {
     const values = condition.notValues.filter((value): value is string => typeof value === "string");
