@@ -95,7 +95,7 @@ function tokenMatchExpression(textExpression: SQL, tokenArray: SQL) {
   `;
 }
 
-function positiveSql() {
+function noMatchSql() {
   return sql<boolean>`false`;
 }
 
@@ -409,10 +409,10 @@ export function companySearchService(db: Db) {
             FROM unnest(${fuzzyTokenArray}) AS qt(value)
           ), false)
         `
-        : positiveSql();
+        : noMatchSql();
       const fuzzyIdentifierMatch = fuzzyEnabled
         ? sql<boolean>`similarity(lower(coalesce(${issues.identifier}, '')), ${normalizedQuery}) >= ${FUZZY_IDENTIFIER_SIMILARITY_THRESHOLD}`
-        : positiveSql();
+        : noMatchSql();
       const fuzzyMatch = sql<boolean>`(${fuzzyTokenTitleMatch} OR ${fuzzyIdentifierMatch})`;
       const tokenCoverage = sql<number>`
         (
@@ -446,7 +446,7 @@ export function companySearchService(db: Db) {
       const tokenCount = tokens.length;
       const allTokensMatch = tokenCount > 0
         ? sql<boolean>`${tokenCoverage} = ${tokenCount}`
-        : positiveSql();
+        : noMatchSql();
       const score = sql<number>`
         (
           CASE WHEN lower(coalesce(${issues.identifier}, '')) = ${normalizedQuery} THEN 1200 ELSE 0 END
