@@ -20,13 +20,12 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useDialogActions } from "../context/DialogContext";
 import { searchApi } from "../api/search";
 import { agentsApi } from "../api/agents";
-import { projectsApi } from "../api/projects";
 import { queryKeys } from "../lib/queryKeys";
 import { loadRecentSearches, pushRecentSearch } from "../lib/recent-searches";
 import { PageTabBar, type PageTabItem } from "../components/PageTabBar";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
 import { SearchResultRow } from "../components/search/SearchResultRow";
-import type { Agent, Project } from "@paperclipai/shared";
+import type { Agent } from "@paperclipai/shared";
 
 const SEARCH_DEBOUNCE_MS = 250;
 const IDENTIFIER_PATTERN = /^[A-Z]+-\d+$/;
@@ -202,23 +201,11 @@ export function Search() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: projects } = useQuery({
-    queryKey: queryKeys.projects.list(selectedCompanyId!),
-    queryFn: () => projectsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
   const agentsById = useMemo<ReadonlyMap<string, Pick<Agent, "id" | "name">>>(() => {
     const map = new Map<string, Pick<Agent, "id" | "name">>();
     for (const agent of agents ?? []) map.set(agent.id, agent);
     return map;
   }, [agents]);
-
-  const projectsById = useMemo<ReadonlyMap<string, Pick<Project, "id" | "name">>>(() => {
-    const map = new Map<string, Pick<Project, "id" | "name">>();
-    for (const project of projects ?? []) map.set(project.id, project);
-    return map;
-  }, [projects]);
 
   // Persist recent searches once we have a successful response with a non-empty query.
   useEffect(() => {
@@ -409,7 +396,6 @@ export function Search() {
                 totalResults={totalResults}
                 isFetching={isFetching && !!data}
                 agentsById={agentsById}
-                projectsById={projectsById}
               />
             ) : null}
           </TabsContent>
@@ -438,7 +424,6 @@ interface SearchTabContentProps {
   totalResults: number;
   isFetching: boolean;
   agentsById: ReadonlyMap<string, Pick<Agent, "id" | "name">>;
-  projectsById: ReadonlyMap<string, Pick<Project, "id" | "name">>;
 }
 
 function SearchTabContent({
@@ -460,7 +445,6 @@ function SearchTabContent({
   totalResults,
   isFetching,
   agentsById,
-  projectsById,
 }: SearchTabContentProps) {
   if (showInitialState) {
     return (
@@ -623,7 +607,6 @@ function SearchTabContent({
                     key={`${result.type}:${result.id}:${result.href}`}
                     result={result}
                     agentsById={agentsById}
-                    projectsById={projectsById}
                   />
                 ))}
               </div>
@@ -638,7 +621,6 @@ function SearchTabContent({
                   key={`${result.type}:${result.id}:${result.href}`}
                   result={result}
                   agentsById={agentsById}
-                  projectsById={projectsById}
                 />
               ))}
           </div>

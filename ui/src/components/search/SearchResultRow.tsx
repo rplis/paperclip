@@ -1,10 +1,9 @@
-import type { ComponentType, SVGProps } from "react";
+import { memo, type ComponentType, type SVGProps } from "react";
 import { Bot, FileText, Hexagon, MessageSquare, Quote } from "lucide-react";
-import type { Agent, CompanySearchResult, Project } from "@paperclipai/shared";
+import type { Agent, CompanySearchResult } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { StatusIcon } from "../StatusIcon";
-import { StatusBadge } from "../StatusBadge";
 import { Identity } from "../Identity";
 import { HighlightedText, type HighlightedTextProps } from "./HighlightedText";
 
@@ -47,15 +46,16 @@ function formatRelativeTime(input: string | null): string {
 export interface SearchResultRowProps {
   result: CompanySearchResult;
   agentsById?: ReadonlyMap<string, Pick<Agent, "id" | "name">>;
-  projectsById?: ReadonlyMap<string, Pick<Project, "id" | "name">>;
   isActive?: boolean;
   className?: string;
 }
 
-export function SearchResultRow({
+const ROW_BASE =
+  "group flex items-start gap-3 px-4 transition-colors no-underline text-inherit hover:bg-muted/40";
+
+function SearchResultRowImpl({
   result,
   agentsById,
-  projectsById,
   isActive,
   className,
 }: SearchResultRowProps) {
@@ -63,11 +63,7 @@ export function SearchResultRow({
     return (
       <Link
         to={result.href}
-        className={cn(
-          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40",
-          isActive && "bg-muted/40",
-          className,
-        )}
+        className={cn(ROW_BASE, "py-2.5", isActive && "bg-muted/40", className)}
         data-result-type="agent"
       >
         <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -94,11 +90,7 @@ export function SearchResultRow({
     return (
       <Link
         to={result.href}
-        className={cn(
-          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40",
-          isActive && "bg-muted/40",
-          className,
-        )}
+        className={cn(ROW_BASE, "py-2.5", isActive && "bg-muted/40", className)}
         data-result-type="project"
       >
         <Hexagon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -122,7 +114,6 @@ export function SearchResultRow({
   const assigneeName = issue.assigneeAgentId
     ? agentsById?.get(issue.assigneeAgentId)?.name ?? null
     : null;
-  const projectName = issue.projectId ? projectsById?.get(issue.projectId)?.name ?? null : null;
   const updated = formatRelativeTime(result.updatedAt ?? issue.updatedAt);
   const titleHighlights = result.snippets.find((snippet) => snippet.field === "title")?.highlights;
   const bodySnippets = result.snippets.filter((snippet) => snippet.field !== "title").slice(0, 2);
@@ -131,11 +122,7 @@ export function SearchResultRow({
     <Link
       to={result.href}
       disableIssueQuicklook
-      className={cn(
-        "group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/40",
-        isActive && "bg-muted/40",
-        className,
-      )}
+      className={cn(ROW_BASE, "py-3", isActive && "bg-muted/40", className)}
       data-result-type="issue"
     >
       <div className="mt-1 shrink-0">
@@ -154,17 +141,8 @@ export function SearchResultRow({
             className="line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug text-foreground"
           />
           <div className="ml-2 hidden shrink-0 items-center gap-2.5 text-xs text-muted-foreground sm:flex">
-            <StatusBadge status={issue.status} />
             {assigneeName ? <Identity name={assigneeName} size="sm" /> : null}
-            {projectName ? (
-              <span className="inline-flex items-center gap-1">
-                <Hexagon className="h-3 w-3" />
-                <span className="max-w-[10ch] truncate">{projectName}</span>
-              </span>
-            ) : null}
-            {updated ? (
-              <span className="tabular-nums">{updated}</span>
-            ) : null}
+            {updated ? <span className="tabular-nums">{updated}</span> : null}
           </div>
         </div>
         {bodySnippets.map((snippet, index) => (
@@ -178,15 +156,15 @@ export function SearchResultRow({
           />
         ))}
         <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
-          <StatusBadge status={issue.status} />
           {assigneeName ? <span className="truncate">{assigneeName}</span> : null}
-          {projectName ? <span className="truncate">· {projectName}</span> : null}
           {updated ? <span className="ml-auto tabular-nums">{updated}</span> : null}
         </div>
       </div>
     </Link>
   );
 }
+
+export const SearchResultRow = memo(SearchResultRowImpl);
 
 interface SnippetLineProps {
   text: string;

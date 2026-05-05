@@ -33,7 +33,6 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { storybookAgents, storybookProjects, storybookIssues } from "../fixtures/paperclipData";
 
 const agentsById = new Map(storybookAgents.map((agent) => [agent.id, agent]));
-const projectsById = new Map(storybookProjects.map((project) => [project.id, project]));
 
 type IssueResultOverrides = Omit<Partial<CompanySearchResult>, "issue"> & {
   issue?: Partial<NonNullable<CompanySearchResult["issue"]>>;
@@ -282,7 +281,6 @@ function SearchPagePreview({
                   key={result.id}
                   result={result}
                   agentsById={agentsById}
-                  projectsById={projectsById}
                 />
               ))}
             </div>
@@ -580,7 +578,6 @@ function SearchStories() {
                 key={result.id}
                 result={result}
                 agentsById={agentsById}
-                projectsById={projectsById}
               />
             ))}
             {fixtureAgents.map((result) => (
