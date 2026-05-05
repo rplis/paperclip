@@ -64,8 +64,8 @@ export function SearchResultRow({
       <Link
         to={result.href}
         className={cn(
-          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40",
-          isActive && "bg-accent/40",
+          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40",
+          isActive && "bg-muted/40",
           className,
         )}
         data-result-type="agent"
@@ -95,8 +95,8 @@ export function SearchResultRow({
       <Link
         to={result.href}
         className={cn(
-          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40",
-          isActive && "bg-accent/40",
+          "group flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40",
+          isActive && "bg-muted/40",
           className,
         )}
         data-result-type="project"
@@ -130,9 +130,10 @@ export function SearchResultRow({
   return (
     <Link
       to={result.href}
+      disableIssueQuicklook
       className={cn(
-        "group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent/40",
-        isActive && "bg-accent/40",
+        "group flex items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/40",
+        isActive && "bg-muted/40",
         className,
       )}
       data-result-type="issue"
@@ -173,6 +174,7 @@ export function SearchResultRow({
             highlights={snippet.highlights}
             field={snippet.field}
             fallbackLabel={snippet.label}
+            multiline
           />
         ))}
         <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground sm:hidden">
@@ -191,18 +193,27 @@ interface SnippetLineProps {
   highlights?: HighlightedTextProps["highlights"];
   field: string;
   fallbackLabel: string;
+  multiline?: boolean;
 }
 
-function SnippetLine({ text, highlights, field, fallbackLabel }: SnippetLineProps) {
+function SnippetLine({ text, highlights, field, fallbackLabel, multiline = false }: SnippetLineProps) {
   const { Icon, label } = snippetStyle(field, fallbackLabel);
   return (
-    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <Icon className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-hidden />
+    <div
+      className={cn(
+        "mt-1 flex min-w-0 gap-1.5 text-xs text-muted-foreground",
+        multiline ? "items-start" : "items-center",
+      )}
+    >
+      <Icon
+        className={cn("h-3 w-3 shrink-0 text-muted-foreground/60", multiline && "mt-0.5")}
+        aria-hidden
+      />
       <span className="sr-only">{label}: </span>
       <HighlightedText
         text={text}
         highlights={highlights}
-        className="line-clamp-1 truncate"
+        className={multiline ? "line-clamp-2 leading-snug" : "line-clamp-1 truncate"}
       />
     </div>
   );
