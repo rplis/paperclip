@@ -36,10 +36,6 @@ const mockAuthApi = vi.hoisted(() => ({
   getSession: vi.fn(),
 }));
 
-const mockInstanceSettingsApi = vi.hoisted(() => ({
-  getExperimental: vi.fn(),
-}));
-
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
@@ -60,10 +56,6 @@ vi.mock("../api/issues", () => ({
 
 vi.mock("../api/auth", () => ({
   authApi: mockAuthApi,
-}));
-
-vi.mock("../api/instanceSettings", () => ({
-  instanceSettingsApi: mockInstanceSettingsApi,
 }));
 
 vi.mock("../hooks/useProjectOrder", () => ({
@@ -366,7 +358,6 @@ describe("IssueProperties", () => {
       color: "#6366f1",
     }));
     mockAuthApi.getSession.mockResolvedValue({ user: { id: "user-1" } });
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
   });
 
   afterEach(() => {
@@ -582,9 +573,8 @@ describe("IssueProperties", () => {
     act(() => root.unmount());
   });
 
-  it("shows a workspace tasks link for non-default workspaces when isolated workspaces are enabled", async () => {
+  it("shows only the workspace detail link for non-default workspaces", async () => {
     mockProjectsApi.list.mockResolvedValue([createProject()]);
-    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: true });
     const root = renderProperties(container, {
       issue: createIssue({
         projectId: "project-1",
@@ -600,14 +590,10 @@ describe("IssueProperties", () => {
     await flush();
     await flush();
 
-    const tasksLink = Array.from(container.querySelectorAll("a")).find(
-      (link) => link.textContent?.includes("View workspace tasks"),
-    );
     const workspaceLink = Array.from(container.querySelectorAll("a")).find(
       (link) => link.textContent?.trim() === "View workspace",
     );
-    expect(tasksLink).not.toBeUndefined();
-    expect(tasksLink?.getAttribute("href")).toBe("/execution-workspaces/workspace-1/issues");
+    expect(container.textContent).not.toContain("View workspace tasks");
     expect(workspaceLink).not.toBeUndefined();
     expect(workspaceLink?.getAttribute("href")).toBe("/execution-workspaces/workspace-1");
 

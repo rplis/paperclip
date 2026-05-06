@@ -7,7 +7,6 @@ import type { AdapterModel } from "../api/agents";
 import { accessApi } from "../api/access";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
-import { instanceSettingsApi } from "../api/instanceSettings";
 import { issuesApi } from "../api/issues";
 import { projectsApi } from "../api/projects";
 import { useCompany } from "../context/CompanyContext";
@@ -125,10 +124,6 @@ function runningRuntimeServiceWithUrl(
   runtimeServices: WorkspaceRuntimeService[] | null | undefined,
 ) {
   return runtimeServices?.find((service) => service.status === "running" && service.url?.trim()) ?? null;
-}
-
-function executionWorkspaceIssuesHref(workspaceId: string) {
-  return `/execution-workspaces/${workspaceId}/issues`;
 }
 
 function toDateTimeLocalValue(value: string | null | undefined) {
@@ -423,12 +418,6 @@ export function IssueProperties({
     queryFn: () => accessApi.listUserDirectory(companyId!),
     enabled: !!companyId,
   });
-  const { data: experimentalSettings } = useQuery({
-    queryKey: queryKeys.instance.experimentalSettings,
-    queryFn: () => instanceSettingsApi.getExperimental(),
-    retry: false,
-  });
-
   const { data: projects } = useQuery({
     queryKey: queryKeys.projects.list(companyId!),
     queryFn: () => projectsApi.list(companyId!),
@@ -496,16 +485,10 @@ export function IssueProperties({
     ? orderedProjects.find((project) => project.id === issue.projectId) ?? null
     : null;
   const issueProject = issue.project ?? currentProject;
-  const isolatedWorkspacesEnabled = experimentalSettings?.enableIsolatedWorkspaces === true;
   const issueUsesMainWorkspace = useMemo(
     () => isMainIssueWorkspace({ issue, project: issueProject }),
     [issue, issueProject],
   );
-  const workspaceTasksExecutionWorkspaceId = useMemo(() => {
-    if (!isolatedWorkspacesEnabled) return null;
-    if (issueUsesMainWorkspace) return null;
-    return issue.executionWorkspaceId ?? issue.currentExecutionWorkspace?.id ?? null;
-  }, [isolatedWorkspacesEnabled, issue, issueUsesMainWorkspace]);
   const showWorkspaceDetailLink = Boolean(issue.executionWorkspaceId) && !issueUsesMainWorkspace;
   const liveWorkspaceService = useMemo(() => {
     if (issueUsesMainWorkspace) return null;
@@ -1855,17 +1838,6 @@ export function IssueProperties({
                   className="text-sm text-primary hover:underline inline-flex items-center gap-1"
                 >
                   View workspace
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              </PropertyRow>
-            )}
-            {workspaceTasksExecutionWorkspaceId && (
-              <PropertyRow label="Tasks">
-                <Link
-                  to={executionWorkspaceIssuesHref(workspaceTasksExecutionWorkspaceId)}
-                  className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  View workspace tasks
                   <ExternalLink className="h-3 w-3" />
                 </Link>
               </PropertyRow>
