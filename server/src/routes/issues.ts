@@ -368,27 +368,6 @@ const INVALID_AGENT_IN_REVIEW_DISPOSITION_MESSAGE =
   "link or request a pending approval, assign a human reviewer with assigneeUserId, set a typed executionState.currentParticipant through an execution policy, " +
   "or schedule an issue monitor for an external review/check. After creating one of those review paths, retry the status update.";
 
-function hasExecutionParticipant(value: unknown) {
-  const state = parseIssueExecutionState(value);
-  if (!state || state.status !== "pending") return false;
-  const participant = state.currentParticipant;
-  if (!participant) return false;
-  if (participant.type === "agent") return Boolean(participant.agentId);
-  if (participant.type === "user") return Boolean(participant.userId);
-  return false;
-}
-
-function hasScheduledMonitor(input: {
-  existingMonitorNextCheckAt?: Date | null;
-  patchMonitorNextCheckAt?: unknown;
-  executionPolicy?: unknown;
-}) {
-  if (input.patchMonitorNextCheckAt instanceof Date && !Number.isNaN(input.patchMonitorNextCheckAt.getTime())) return true;
-  if (input.patchMonitorNextCheckAt === undefined && input.existingMonitorNextCheckAt) return true;
-  const policy = normalizeIssueExecutionPolicy(input.executionPolicy ?? null);
-  return Boolean(policy?.monitor?.nextCheckAt);
-}
-
 function executionPrincipalsEqual(
   left: ParsedExecutionState["currentParticipant"] | null,
   right: ParsedExecutionState["currentParticipant"] | null,
