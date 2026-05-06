@@ -26,6 +26,9 @@ import { orderItemsBySelectedAndRecent } from "../lib/recent-selections";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import { buildExecutionPolicy, stageParticipantValues } from "../lib/issue-execution-policy";
 import { formatMonitorOffset } from "../lib/issue-monitor";
+import { formatRetryReason } from "../lib/runRetryState";
+import { useRetryNowMutation } from "../hooks/useRetryNowMutation";
+import { RetryErrorBand } from "./IssueScheduledRetryCard";
 import { extractProviderIdWithFallback } from "../lib/model-utils";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
@@ -46,7 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { User, Hexagon, ArrowUpRight, Tag, Plus, GitBranch, FolderOpen, Check, ExternalLink, X, Clock } from "lucide-react";
+import { User, Hexagon, ArrowUpRight, Tag, Plus, GitBranch, FolderOpen, Check, ExternalLink, X, Clock, RotateCcw, Loader2, CheckCircle2 } from "lucide-react";
 import { AgentIcon } from "./AgentIconPicker";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 
@@ -393,6 +396,7 @@ export function IssueProperties({
   const [approversOpen, setApproversOpen] = useState(false);
   const [approverSearch, setApproverSearch] = useState("");
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [scheduledRetryOpen, setScheduledRetryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [labelSearch, setLabelSearch] = useState("");
@@ -928,6 +932,169 @@ export function IssueProperties({
     <span className="text-xs text-muted-foreground">
       Attempt {issue.monitorAttemptCount}
     </span>
+  ) : null;
+
+  const scheduledRetry = issue.scheduledRetry ?? null;
+  const retryNow = useRetryNowMutation(issue.id);
+  const showScheduledRetryRow = scheduledRetry && scheduledRetry.status === "scheduled_retry";
+  const scheduledRetryDueAtIso = scheduledRetry?.scheduledRetryAt
+    ? new Date(scheduledRetry.scheduledRetryAt).toISOString()
+    : null;
+  const scheduledRetryRelative = scheduledRetryDueAtIso
+    ? formatMonitorOffset(scheduledRetryDueAtIso)
+    : null;
+  const scheduledRetryAbsolute = scheduledRetry?.scheduledRetryAt
+    ? formatDateTime(scheduledRetry.scheduledRetryAt)
+    : null;
+  const scheduledRetryShortDate = scheduledRetry?.scheduledRetryAt
+    ? formatDate(new Date(scheduledRetry.scheduledRetryAt))
+    : null;
+  const scheduledRetryReasonLabel = formatRetryReason(scheduledRetry?.scheduledRetryReason);
+  const scheduledRetryAttempt =
+    typeof scheduledRetry?.scheduledRetryAttempt === "number"
+    && Number.isFinite(scheduledRetry.scheduledRetryAttempt)
+    && scheduledRetry.scheduledRetryAttempt > 0
+      ? scheduledRetry.scheduledRetryAttempt
+      : null;
+  const scheduledRetryIsContinuation =
+    scheduledRetry?.scheduledRetryReason === "max_turns_continuation";
+  const scheduledRetryRelativeLabel = (() => {
+    if (!scheduledRetryRelative) return "Pending schedule";
+    const action = scheduledRetryIsContinuation ? "Continuation" : "Retry";
+    if (scheduledRetryRelative === "now") return `${action} due now`;
+    return `${action} ${scheduledRetryRelative}`;
+  })();
+  const scheduledRetryRetryNowSuccess = retryNow.isSuccess
+    && (retryNow.data?.outcome === "promoted" || retryNow.data?.outcome === "already_promoted");
+  const scheduledRetryAttemptBadge = scheduledRetryAttempt !== null ? (
+    <span className="text-xs text-muted-foreground">Attempt {scheduledRetryAttempt}</span>
+  ) : null;
+  const scheduledRetryTrigger = (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-600 dark:text-cyan-400" aria-hidden="true" />
+      <span
+        className="min-w-0 text-sm break-words text-foreground"
+        title={scheduledRetryAbsolute ?? undefined}
+      >
+        {scheduledRetryRelativeLabel}
+      </span>
+      {scheduledRetryShortDate ? (
+        <span className="text-xs text-muted-foreground" title={scheduledRetryAbsolute ?? undefined}>
+          {scheduledRetryShortDate}
+        </span>
+      ) : null}
+    </span>
+  );
+  const scheduledRetryContent = scheduledRetry ? (
+    <div className="flex w-full flex-col gap-2 p-2 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">
+          {scheduledRetryIsContinuation ? "Scheduled continuation" : "Scheduled retry"}
+        </span>
+        {scheduledRetryAttempt !== null ? (
+          <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-xs text-muted-foreground">
+            Attempt {scheduledRetryAttempt}
+          </span>
+        ) : null}
+      </div>
+      <dl className="grid grid-cols-[6rem_1fr] gap-y-1">
+        {scheduledRetryReasonLabel ? (
+          <>
+            <dt className="text-muted-foreground">Reason</dt>
+            <dd className="text-foreground">{scheduledRetryReasonLabel}</dd>
+          </>
+        ) : null}
+        {scheduledRetryAbsolute ? (
+          <>
+            <dt className="text-muted-foreground">Next attempt</dt>
+            <dd className="text-foreground">
+              {scheduledRetryAbsolute}
+              {scheduledRetryRelative ? (
+                <span className="ml-1 text-muted-foreground">· {scheduledRetryRelative}</span>
+              ) : null}
+            </dd>
+          </>
+        ) : null}
+        {scheduledRetry.retryOfRunId ? (
+          <>
+            <dt className="text-muted-foreground">Replaces run</dt>
+            <dd className="text-foreground">
+              <Link
+                to={`/agents/${scheduledRetry.agentId}/runs/${scheduledRetry.retryOfRunId}`}
+                className="font-mono text-foreground hover:underline"
+              >
+                {scheduledRetry.retryOfRunId.slice(0, 8)}
+              </Link>
+            </dd>
+          </>
+        ) : null}
+        {scheduledRetry.agentName ? (
+          <>
+            <dt className="text-muted-foreground">Agent</dt>
+            <dd className="text-foreground">
+              <Link
+                to={`/agents/${scheduledRetry.agentId}`}
+                className="text-foreground hover:underline"
+              >
+                {scheduledRetry.agentName}
+              </Link>
+            </dd>
+          </>
+        ) : null}
+        {scheduledRetry.error ? (
+          <>
+            <dt className="text-muted-foreground">Last error</dt>
+            <dd className="text-foreground break-words">{scheduledRetry.error}</dd>
+          </>
+        ) : null}
+      </dl>
+      <RetryErrorBand
+        error={retryNow.lastError}
+        onRetry={() => {
+          retryNow.reset();
+          retryNow.mutate();
+        }}
+      />
+      <Separator className="my-1" />
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="default"
+          onClick={() => retryNow.mutate()}
+          disabled={retryNow.isPending || scheduledRetryRetryNowSuccess}
+          data-testid="issue-scheduled-retry-properties-retry-now"
+        >
+          {retryNow.isPending ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Retrying…
+            </span>
+          ) : scheduledRetryRetryNowSuccess ? (
+            <span className="inline-flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              {retryNow.data?.outcome === "already_promoted" ? "Already promoted" : "Promoted"}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              Retry now
+            </span>
+          )}
+        </Button>
+        <span className="text-right text-xs text-muted-foreground">
+          {retryNow.isPending
+            ? "Promoting scheduled retry"
+            : scheduledRetryRetryNowSuccess
+              ? retryNow.data?.outcome === "already_promoted"
+                ? "Already promoted — run starting"
+                : "Promoted — run starting"
+              : scheduledRetryIsContinuation
+                ? "Pulls continuation forward immediately"
+                : "Pulls retry forward immediately"}
+        </span>
+      </div>
+    </div>
   ) : null;
   const monitorContent = (
     <div className="flex w-full flex-col gap-2">
@@ -1793,6 +1960,21 @@ export function IssueProperties({
             <span className="text-sm">{currentExecutionLabel}</span>
           </PropertyRow>
         )}
+
+        {showScheduledRetryRow && scheduledRetryContent ? (
+          <PropertyPicker
+            inline={inline}
+            label="Scheduled retry"
+            open={scheduledRetryOpen}
+            onOpenChange={setScheduledRetryOpen}
+            triggerContent={scheduledRetryTrigger}
+            triggerClassName="min-w-0 max-w-full"
+            popoverClassName={cn("max-w-full", inline ? "w-full" : "w-80 sm:w-[32rem]")}
+            extra={scheduledRetryAttemptBadge}
+          >
+            {scheduledRetryContent}
+          </PropertyPicker>
+        ) : null}
 
         <PropertyPicker
           inline={inline}
