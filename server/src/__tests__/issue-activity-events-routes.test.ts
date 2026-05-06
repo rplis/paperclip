@@ -266,6 +266,70 @@ describe("issue activity event routes", () => {
     });
   }, 15_000);
 
+  it("logs readable workspace change activity details for issue updates", async () => {
+    const previousWorkspaceId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const nextWorkspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const issue = {
+      ...makeIssue(),
+      projectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      projectWorkspaceId: previousWorkspaceId,
+      executionWorkspaceId: null,
+      executionWorkspacePreference: "shared_workspace",
+      executionWorkspaceSettings: { mode: "shared_workspace" },
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+
+    const dbMock = {
+      select: vi.fn(() => ({
+        from: () => ({
+          where: async () => [
+            { id: previousWorkspaceId, name: "Main workspace" },
+            { id: nextWorkspaceId, name: "Feature workspace" },
+          ],
+        }),
+      })),
+    };
+
+    const res = await request(await createApp(dbMock))
+      .patch(`/api/issues/${issue.id}`)
+      .send({ projectWorkspaceId: nextWorkspaceId });
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(mockLogActivity).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: "issue.updated",
+          details: expect.objectContaining({
+            projectWorkspaceId: nextWorkspaceId,
+            workspaceChange: {
+              from: {
+                label: "Main workspace",
+                projectWorkspaceId: previousWorkspaceId,
+                executionWorkspaceId: null,
+                mode: "shared_workspace",
+              },
+              to: {
+                label: "Feature workspace",
+                projectWorkspaceId: nextWorkspaceId,
+                executionWorkspaceId: null,
+                mode: "shared_workspace",
+              },
+            },
+            _previous: expect.objectContaining({
+              projectWorkspaceId: previousWorkspaceId,
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
   it("logs successful_run_handoff_resolved when an in_progress issue transitions to done with a pending required handoff", async () => {
     const issue = { ...makeIssue(), status: "in_progress" };
     mockIssueService.getById.mockResolvedValue(issue);

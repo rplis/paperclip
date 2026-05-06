@@ -201,6 +201,13 @@ function formatTimelineActorName(
   return formatAssigneeUserLabel(actorId, currentUserId) ?? "Board";
 }
 
+function formatTimelineWorkspaceLabel(
+  workspace: NonNullable<IssueTimelineEvent["workspaceChange"]>["from"],
+) {
+  const fallbackId = workspace.executionWorkspaceId ?? workspace.projectWorkspaceId;
+  return workspace.label ?? (fallbackId ? fallbackId.slice(0, 8) : "None");
+}
+
 function initialsForName(name: string) {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) {
@@ -532,6 +539,21 @@ function TimelineEventCard({
             <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="font-medium text-foreground">
               {formatTimelineAssigneeLabel(event.assigneeChange.to, agentMap, currentUserId)}
+            </span>
+          </div>
+        ) : null}
+
+        {event.workspaceChange ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="w-14 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Workspace
+            </span>
+            <span className="text-muted-foreground">
+              {formatTimelineWorkspaceLabel(event.workspaceChange.from)}
+            </span>
+            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="font-medium text-foreground">
+              {formatTimelineWorkspaceLabel(event.workspaceChange.to)}
             </span>
           </div>
         ) : null}
