@@ -716,6 +716,7 @@ export {
   type CompanySearchQuery,
   createIssueSchema,
   createChildIssueSchema,
+  resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
   updateIssueSchema,
   issueExecutionPolicySchema,

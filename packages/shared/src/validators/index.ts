@@ -150,6 +150,7 @@ export {
 export {
   createIssueSchema,
   createChildIssueSchema,
+  resolveCreateIssueStatusDefault,
   createIssueLabelSchema,
   updateIssueSchema,
   issueExecutionPolicySchema,

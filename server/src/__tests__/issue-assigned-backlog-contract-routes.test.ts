@@ -205,6 +205,18 @@ describe("assigned backlog creation contract", () => {
         payload: expect.objectContaining({ mutation: "create" }),
       }),
     );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.created",
+        details: expect.objectContaining({
+          status: "todo",
+          statusDefaulted: true,
+          statusDefaultReason: "assigned_omitted_status",
+          assignmentWakeSkipped: false,
+        }),
+      }),
+    );
   });
 
   it("does not let a parent-blocking assigned child become an unwoken backlog leaf by default", async () => {
@@ -242,6 +254,10 @@ describe("assigned backlog creation contract", () => {
       expect.objectContaining({
         action: "issue.child_created",
         details: expect.objectContaining({
+          status: "todo",
+          statusDefaulted: true,
+          statusDefaultReason: "assigned_omitted_status",
+          assignmentWakeSkipped: false,
           parentBlockerAdded: true,
         }),
       }),
@@ -283,6 +299,13 @@ describe("assigned backlog creation contract", () => {
       expect.objectContaining({
         action: "issue.created",
         entityId: "issue-1",
+        details: expect.objectContaining({
+          status: "backlog",
+          statusDefaulted: false,
+          statusDefaultReason: "explicit",
+          assignmentWakeSkipped: true,
+          assignmentWakeSkipReason: "assigned_backlog",
+        }),
       }),
     );
     expect(mockWakeup).not.toHaveBeenCalled();
