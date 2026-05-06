@@ -124,22 +124,22 @@ export function IssueRow({
           </span>
         ) : null}
         <span className="flex items-center gap-2 sm:order-1 sm:shrink-0">
-              {desktopLeadingSpacer ? (
-                <span className="hidden w-3.5 shrink-0 sm:block" />
-              ) : null}
-              {desktopMetaLeading ?? (
-                <>
-                  <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
-                    <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} className={selectedStatusClass} />
-                    {productivityReviewIndicator}
-                  </span>
-                  {checklistStep}
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {identifier}
-                  </span>
-                  {planningModeIndicator}
-                </>
-              )}
+          {desktopLeadingSpacer ? (
+            <span className="hidden w-3.5 shrink-0 sm:block" />
+          ) : null}
+          {desktopMetaLeading ?? (
+            <>
+              <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
+                <StatusIcon status={issue.status} blockerAttention={issue.blockerAttention} className={selectedStatusClass} />
+                {productivityReviewIndicator}
+              </span>
+              {checklistStep}
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {identifier}
+              </span>
+              {planningModeIndicator}
+            </>
+          )}
           {mobileMeta ? (
             <>
               <span className="text-xs text-muted-foreground sm:hidden" aria-hidden="true">

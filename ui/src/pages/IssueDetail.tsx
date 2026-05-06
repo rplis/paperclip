@@ -819,7 +819,6 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     () => extractIssueTimelineEvents(resolvedActivity),
     [resolvedActivity],
   );
-  const resolvedWorkMode: IssueWorkMode = issueWorkMode;
 
   return (
     <div className="space-y-3">
@@ -883,7 +882,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           onSubmitInteractionAnswers(interaction, answers)
         }
         onCancelInteraction={onCancelInteraction}
-        issueWorkMode={resolvedWorkMode}
+        issueWorkMode={issueWorkMode}
         onWorkModeChange={onWorkModeChange}
         onCancelRun={runningIssueRun && onPauseWorkRun
           ? async () => {

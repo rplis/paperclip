@@ -1178,6 +1178,8 @@ export function NewIssueDialog() {
     },
     [assigneeAdapterModels],
   );
+  const currentWorkMode = ISSUE_WORK_MODE_OPTIONS[workMode === "planning" ? 1 : 0]!;
+  const CurrentWorkModeIcon = currentWorkMode.icon;
 
   return (
     <Dialog
@@ -1913,17 +1915,8 @@ export function NewIssueDialog() {
                     : "border-border text-muted-foreground hover:bg-accent/50",
                 )}
               >
-                {(() => {
-                  const current = ISSUE_WORK_MODE_OPTIONS.find((option) => option.value === workMode)
-                    ?? ISSUE_WORK_MODE_OPTIONS[0]!;
-                  const Icon = current.icon;
-                  return (
-                    <>
-                      <Icon className="h-3 w-3" />
-                      {current.label}
-                    </>
-                  );
-                })()}
+                <CurrentWorkModeIcon className="h-3 w-3" />
+                {currentWorkMode.label}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-36 p-1" align="start">
