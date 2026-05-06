@@ -539,6 +539,30 @@ describe("renderPaperclipWakePrompt", () => {
     expect(prompt).toContain("must not start implementation work on the planning issue itself");
   });
 
+  it("keeps accepted-plan guidance when stale comment ids have no loaded comments", () => {
+    const prompt = renderPaperclipWakePrompt({
+      reason: "issue_commented",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-3404",
+        title: "Plan first",
+        status: "in_progress",
+        workMode: "planning",
+      },
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      commentIds: ["stale-comment-1"],
+      latestCommentId: "stale-comment-1",
+      commentWindow: { requestedCount: 1, includedCount: 0, missingCount: 1 },
+      comments: [],
+      fallbackFetchNeeded: true,
+    });
+
+    expect(prompt).toContain("accepted-plan continuation");
+    expect(prompt).toContain("Create child issues from the approved plan only");
+    expect(prompt).not.toContain("Update the plan only");
+  });
+
   it("renders dependency-blocked interaction guidance", () => {
     const prompt = renderPaperclipWakePrompt({
       reason: "issue_commented",

@@ -667,12 +667,12 @@ export function renderPaperclipWakePrompt(
     lines.push(`- issue priority: ${normalized.issue.priority}`);
   }
   if (normalized.issue?.workMode === "planning") {
-    const hasComments = normalized.comments.length > 0 || normalized.commentIds.length > 0;
+    const hasWakeComments = normalized.comments.length > 0;
     const acceptedPlanContinuation =
-      !hasComments &&
+      !hasWakeComments &&
       normalized.interactionKind === "request_confirmation" && normalized.interactionStatus === "accepted";
     let directive = "Make the plan only. Do not write code or perform implementation work.";
-    if (hasComments) {
+    if (hasWakeComments) {
       directive = "Update the plan only. Do not write code or perform implementation work.";
     }
     if (acceptedPlanContinuation) {

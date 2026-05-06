@@ -263,7 +263,7 @@ interface IssueChatComposerProps {
   composerHint?: string | null;
   issueStatus?: string;
   issueWorkMode?: IssueWorkMode;
-  onWorkModeChange?: (workMode: IssueWorkMode) => void;
+  onWorkModeChange?: (workMode: IssueWorkMode) => Promise<void> | void;
 }
 
 interface IssueChatThreadProps {
@@ -307,7 +307,7 @@ interface IssueChatThreadProps {
   mentions?: MentionOption[];
   composerDisabledReason?: string | null;
   composerHint?: string | null;
-  onWorkModeChange?: (workMode: IssueWorkMode) => void;
+  onWorkModeChange?: (workMode: IssueWorkMode) => Promise<void> | void;
   showComposer?: boolean;
   showJumpToLatest?: boolean;
   emptyMessage?: string;
@@ -2941,7 +2941,7 @@ const IssueChatComposer = forwardRef<IssueChatComposerHandle, IssueChatComposerP
     setUnassignedConfirmed(false);
     try {
       if (workModeChanged && onWorkModeChange) {
-        onWorkModeChange(pendingWorkMode);
+        await onWorkModeChange(pendingWorkMode);
       }
       const appendPromise = api.thread().append({
         role: "user",
