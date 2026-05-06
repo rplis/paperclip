@@ -2143,30 +2143,35 @@ function StaleDispositionWarningRow({
 
   return (
     <div id={anchorId} data-testid="stale-disposition-warning">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={detailsId}
-        className="group flex w-full items-center gap-2.5 rounded-lg px-1 py-2 text-left transition-colors hover:bg-accent/5"
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="text-sm font-medium text-foreground/80">
-          Stale disposition warning
-        </span>
-        <a
-          href={anchorId ? `#${anchorId}` : undefined}
-          onClick={(event) => event.stopPropagation()}
-          className="text-xs text-muted-foreground/60 underline-offset-2 hover:text-foreground hover:underline"
-        >
-          {timeAgo(message.createdAt)}
-        </a>
-        <ChevronDown className={cn("ml-auto h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform", open && "rotate-180")} />
-      </button>
-      {open ? (
-        <div id={detailsId} className="space-y-1 py-1 pl-1">
-          <StaleDispositionWarningDetails sections={sections} />
+      <div className="flex items-start gap-2.5 py-1.5">
+        <span className="size-6 shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={detailsId}
+            className="group flex w-full items-center gap-2 py-0.5 text-left"
+            onClick={() => setOpen((value) => !value)}
+          >
+            <span className="text-sm font-medium text-foreground/80">
+              Stale disposition warning
+            </span>
+            <span className="ml-auto flex items-center gap-1.5">
+              {message.createdAt ? (
+                <span data-testid="stale-disposition-warning-time" className="text-[11px] text-muted-foreground/50">
+                  {commentDateLabel(message.createdAt)}
+                </span>
+              ) : null}
+              <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground/40 transition-transform", open && "rotate-180")} />
+            </span>
+          </button>
+          {open ? (
+            <div id={detailsId} className="space-y-1 py-1">
+              <StaleDispositionWarningDetails sections={sections} />
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }
