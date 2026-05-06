@@ -12,6 +12,7 @@ import {
 import {
   DndContext,
   MouseSensor,
+  TouchSensor,
   closestCenter,
   type DragEndEvent,
   useSensor,
@@ -69,6 +70,7 @@ function SortableCompanyItem({
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
@@ -96,13 +98,24 @@ function SortableCompanyItem({
         isDragging && "opacity-80",
         isSelected && "bg-accent text-accent-foreground",
       )}
-      {...attributes}
-      {...(isEditing ? listeners : {})}
     >
       <WorkspaceIcon company={company} />
       <span className="min-w-0 flex-1 truncate">{company.name}</span>
       {isEditing ? (
-        <GripVertical className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          aria-label={`Reorder ${company.name}`}
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-[2px] focus-visible:ring-ring"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" aria-hidden="true" />
+        </button>
       ) : (
         <>
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
@@ -129,6 +142,9 @@ export function SidebarCompanyMenu({ open: controlledOpen, onOpenChange }: Sideb
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: { distance: 8 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 6 },
     }),
   );
   const sidebarCompanies = useMemo(
