@@ -20,6 +20,8 @@ import { EmptyState } from "../components/EmptyState";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { CopyText } from "../components/CopyText";
+import { Identity } from "../components/Identity";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +51,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Copy,
   RefreshCw,
   Save,
   Search,
@@ -597,18 +600,21 @@ function SkillPane({
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Source</span>
-              <span className="flex items-center gap-2">
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
                 <SourceIcon className="h-3.5 w-3.5 text-muted-foreground" />
                 {detail.sourcePath ? (
-                  <button
-                    className="truncate hover:text-foreground text-muted-foreground transition-colors cursor-pointer"
-                    onClick={() => {
-                      navigator.clipboard.writeText(detail.sourcePath!);
-                      pushToast({ title: "Copied path to workspace" });
-                    }}
-                  >
-                    {source.label}
-                  </button>
+                  <>
+                    <span className="max-w-full break-all text-muted-foreground">{detail.sourcePath}</span>
+                    <CopyText text={detail.sourcePath} copiedLabel="Copied path">
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy
+                      </button>
+                    </CopyText>
+                  </>
                 ) : (
                   <span className="truncate">{source.label}</span>
                 )}
@@ -662,14 +668,14 @@ function SkillPane({
             {usedBy.length === 0 ? (
               <span className="text-muted-foreground">No agents attached</span>
             ) : (
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {usedBy.map((agent) => (
                   <Link
                     key={agent.id}
                     to={`/agents/${agent.urlKey}/skills`}
-                    className="text-foreground no-underline hover:underline"
+                    className="group rounded-md border border-transparent p-2 no-underline hover:border-border hover:bg-accent/40"
                   >
-                    {agent.name}
+                    <Identity name={agent.name} size="sm" />
                   </Link>
                 ))}
               </div>
