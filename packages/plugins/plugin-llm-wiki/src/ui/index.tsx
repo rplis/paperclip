@@ -159,6 +159,7 @@ type ManagedSkill = {
   status: string;
   skillId?: string | null;
   resourceKey?: string | null;
+  defaultDrift?: { changedFiles: string[] } | null;
   skill?: {
     id?: string;
     name?: string;
@@ -4878,9 +4879,11 @@ function buildSkillHealthItems(skills: ManagedSkill[]): RoutineHealthItem[] {
   }
   return skills.map((skill) => ({
     label: skillLabel(skill),
-    ok: managedSkillIsReady(skill),
+    ok: managedSkillIsReady(skill) && !skill.defaultDrift?.changedFiles.length,
     detail: managedSkillIsReady(skill)
-      ? `${skillLabel(skill)} is installed in the company skill library.`
+      ? skill.defaultDrift?.changedFiles.length
+        ? `${skillLabel(skill)} differs from the plugin default: ${skill.defaultDrift.changedFiles.join(", ")}.`
+        : `${skillLabel(skill)} is installed in the company skill library.`
       : `${skillLabel(skill)} is not installed in the company skill library.`,
   }));
 }

@@ -183,6 +183,7 @@ export type WikiSkillResource = {
   resourceKey: string;
   skill: PluginManagedSkillResolution["skill"];
   details: { name: string; key: string; description: string | null } | null;
+  defaultDrift?: { changedFiles: string[] } | null;
 };
 
 export type WikiResourceOption = {
@@ -1591,6 +1592,7 @@ function skillResource(resolved: PluginManagedSkillResolution): WikiSkillResourc
     resourceKey: resolved.resourceKey,
     skill: resolved.skill,
     details: skillDetails(resolved.skill),
+    defaultDrift: resolved.defaultDrift ?? null,
   };
 }
 

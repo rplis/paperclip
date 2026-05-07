@@ -668,9 +668,9 @@ describe("LLM Wiki plugin scaffold", () => {
     expect(manifest.agents?.[0]?.agentKey).toBe("wiki-maintainer");
     expect(manifest.agents?.[0]?.adapterType).toBe("claude_local");
     expect(manifest.agents?.[0]?.adapterConfig).toMatchObject({
-      dangerouslySkipPermissions: true,
-      dangerouslyBypassApprovalsAndSandbox: true,
-      sandbox: false,
+      dangerouslySkipPermissions: false,
+      dangerouslyBypassApprovalsAndSandbox: false,
+      sandbox: true,
     });
     expect(manifest.agents?.[0]?.instructions?.entryFile).toBe("AGENTS.md");
     expect(manifest.agents?.[0]?.instructions?.content).toContain("You are the maintainer of this personal wiki");
@@ -1134,6 +1134,29 @@ Duplicate headings receive stable suffixes.
     expect(markup).toContain("Managed Skills");
     expect(markup).toContain("skill issue(s) need attention");
     expect(markup).toContain("LLM Wiki Maintainer is not installed in the company skill library.");
+    expect(markup).toContain("Re-sync skills");
+  });
+
+  it("shows managed skill default drift in setup health", () => {
+    mockPathname = "/PAP/wiki/settings";
+    mockSettingsManagedSkills = [{
+      status: "resolved",
+      skillId: "skill-1",
+      resourceKey: WIKI_MAINTAINER_SKILL_KEY,
+      defaultDrift: { changedFiles: ["SKILL.md"] },
+      details: {
+        name: "LLM Wiki Maintainer",
+        key: WIKI_MAINTAINER_SKILL_CANONICAL_KEY,
+        description: null,
+      },
+    }];
+
+    const markup = renderToStaticMarkup(createElement(WikiPage, {
+      context: { companyId: COMPANY_ID, companyPrefix: "PAP" },
+    } as never));
+
+    expect(markup).toContain("skill issue(s) need attention");
+    expect(markup).toContain("LLM Wiki Maintainer differs from the plugin default: SKILL.md.");
     expect(markup).toContain("Re-sync skills");
   });
 

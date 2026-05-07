@@ -91,6 +91,20 @@ function buildPackageFiles(
   return files;
 }
 
+function buildDeclaredSkillFiles(
+  pluginKey: string,
+  declaration: PluginManagedSkillDeclaration,
+) {
+  const packageFiles = buildPackageFiles(pluginKey, declaration);
+  const root = declaration.skillKey;
+  const prefix = `${root}/`;
+  const files: Record<string, string> = {};
+  for (const [filePath, content] of Object.entries(packageFiles)) {
+    files[filePath.startsWith(prefix) ? filePath.slice(prefix.length) : filePath] = content;
+  }
+  return files;
+}
+
 function buildSkillDefaults(
   pluginKey: string,
   declaration: PluginManagedSkillDeclaration,
@@ -114,6 +128,7 @@ function resolution(
   declaration: PluginManagedSkillDeclaration,
   skill: CompanySkill | null,
   status: PluginManagedSkillResolution["status"],
+  defaultDrift: PluginManagedSkillResolution["defaultDrift"] = null,
 ): PluginManagedSkillResolution {
   return {
     pluginKey,
@@ -123,6 +138,7 @@ function resolution(
     skillId: skill?.id ?? null,
     skill,
     status,
+    defaultDrift,
   };
 }
 
@@ -191,6 +207,53 @@ export function pluginManagedSkillService(
     return skills.getById(companyId, skillId);
   }
 
+  async function managedSkillDefaultDrift(
+    companyId: string,
+    skill: CompanySkill | null,
+    declaration: PluginManagedSkillDeclaration,
+  ): Promise<PluginManagedSkillResolution["defaultDrift"]> {
+    if (!skill) return null;
+    const declaredFiles = buildDeclaredSkillFiles(options.pluginKey, declaration);
+    const currentFiles: Record<string, string | null> = {};
+    const paths = new Set([
+      ...Object.keys(declaredFiles),
+      ...skill.fileInventory.map((entry) => entry.path),
+    ]);
+
+    for (const filePath of paths) {
+      if (filePath === "SKILL.md") {
+        currentFiles[filePath] = skill.markdown;
+        continue;
+      }
+      try {
+        currentFiles[filePath] = (await skills.readFile(companyId, skill.id, filePath))?.content ?? null;
+      } catch {
+        currentFiles[filePath] = null;
+      }
+    }
+
+    const changedFiles = [...paths]
+      .filter((filePath) => (currentFiles[filePath] ?? null) !== (declaredFiles[filePath] ?? null))
+      .sort((left, right) => left.localeCompare(right));
+    return changedFiles.length > 0 ? { changedFiles } : null;
+  }
+
+  async function resolvedSkill(
+    companyId: string,
+    declaration: PluginManagedSkillDeclaration,
+    skill: CompanySkill | null,
+    status: PluginManagedSkillResolution["status"],
+  ) {
+    return resolution(
+      options.pluginKey,
+      companyId,
+      declaration,
+      skill,
+      status,
+      await managedSkillDefaultDrift(companyId, skill, declaration),
+    );
+  }
+
   async function importDeclaredSkill(
     companyId: string,
     declaration: PluginManagedSkillDeclaration,
@@ -224,9 +287,9 @@ export function pluginManagedSkillService(
   async function get(skillKey: string, companyId: string) {
     const declaration = declarationFor(skillKey);
     const binding = await getBinding(companyId, skillKey);
-    if (!binding) return resolution(options.pluginKey, companyId, declaration, null, "missing");
+    if (!binding) return resolvedSkill(companyId, declaration, null, "missing");
     const skill = await getSkill(companyId, binding.resourceId);
-    return resolution(options.pluginKey, companyId, declaration, skill, skill ? "resolved" : "missing");
+    return resolvedSkill(companyId, declaration, skill, skill ? "resolved" : "missing");
   }
 
   async function reconcile(skillKey: string, companyId: string) {
@@ -250,7 +313,7 @@ export function pluginManagedSkillService(
         status: imported.status,
       },
     });
-    return resolution(options.pluginKey, companyId, declaration, imported.skill, imported.status);
+    return resolvedSkill(companyId, declaration, imported.skill, imported.status);
   }
 
   async function reset(skillKey: string, companyId: string) {
@@ -268,7 +331,7 @@ export function pluginManagedSkillService(
         managedResourceKey: declaration.skillKey,
       },
     });
-    return resolution(options.pluginKey, companyId, declaration, imported.skill, "reset");
+    return resolvedSkill(companyId, declaration, imported.skill, "reset");
   }
 
   return {

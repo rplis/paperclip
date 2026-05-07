@@ -174,6 +174,27 @@ describeEmbeddedPostgres("plugin-managed skills", () => {
     expect(reset.skill?.markdown).toContain("key: \"plugin/paperclip-managed-skills-test/wiki-maintainer\"");
   });
 
+  it("reports drift when installed skill files differ from plugin defaults", async () => {
+    const { companyId, services } = await seedCompanyAndPlugin();
+    const created = await services.skills.managedReconcile({ companyId, skillKey: "wiki-maintainer" });
+    expect(created.defaultDrift).toBeNull();
+
+    await db
+      .update(companySkills)
+      .set({
+        markdown: "# Custom instructions\n",
+        updatedAt: new Date(),
+      })
+      .where(eq(companySkills.id, created.skillId!));
+
+    const drifted = await services.skills.managedReconcile({ companyId, skillKey: "wiki-maintainer" });
+    expect(drifted.status).toBe("resolved");
+    expect(drifted.defaultDrift).toEqual({ changedFiles: ["SKILL.md"] });
+
+    const reset = await services.skills.managedReset({ companyId, skillKey: "wiki-maintainer" });
+    expect(reset.defaultDrift).toBeNull();
+  });
+
   it("adds the canonical managed key to manifest-provided markdown skills", async () => {
     const pluginManifest = manifest();
     pluginManifest.skills = [

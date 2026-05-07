@@ -321,6 +321,9 @@ export interface PluginManagedSkillResolution {
   skillId: string | null;
   skill: CompanySkill | null;
   status: "missing" | "resolved" | "created" | "relinked" | "reset";
+  defaultDrift?: {
+    changedFiles: string[];
+  } | null;
 }
 
 /**
