@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { store } from "@lean/db";
 import {
+  agentChannelThreadId,
   createCardSchema,
   createCompanySchema,
   createEscalationSchema,
@@ -65,7 +66,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
       ok: false,
       httpStatus: 409,
       error:
-        "Kickoff is blocked until @boss clarifies the goal in #general. Reply there, then move the card out of Blocked on the Board (or extend the goal description and recreate)."
+        "Kickoff is blocked until @boss clarifies the goal. Reply in Channels (#general or @ceo's channel), then move the kickoff card out of Blocked on the Board (or extend the goal description and recreate)."
     };
   }
 
@@ -99,7 +100,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
 
     store.createMessage({
       companyId,
-      threadId: "general",
+      threadId: agentChannelThreadId(ceo.handle),
       authorType: "agent",
       authorId: ceo.id,
       body,
@@ -117,7 +118,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
     const msg = error instanceof Error ? error.message : "Codex run failed";
     store.createMessage({
       companyId,
-      threadId: "general",
+      threadId: agentChannelThreadId(ceo.handle),
       authorType: "agent",
       authorId: ceo.id,
       body: `CEO Codex run failed: ${msg}`,

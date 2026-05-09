@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type {
-  BoardCard,
-  BoardColumn,
-  ChannelMessage,
-  Company,
-  Escalation,
-  Goal,
-  OrgNode
+import {
+  agentChannelThreadId,
+  type BoardCard,
+  type BoardColumn,
+  type ChannelMessage,
+  type Company,
+  type Escalation,
+  type Goal,
+  type OrgNode
 } from "@lean/shared";
 
 const API = "http://localhost:3200/api";
 const OPERATOR_HANDLE = "boss";
 
-type NavId = "dashboard" | "inbox" | "board" | "org" | "goals";
+type NavId = "dashboard" | "channels" | "inbox" | "board" | "org" | "goals";
 type InboxTab = "mine" | "recent" | "unread" | "all";
 type AgentFileTab = "agentMd" | "heartbeatMd" | "soulMd" | "toolsMd";
 
@@ -52,10 +53,18 @@ function orgChildren(nodes: OrgNode[], parentId: string): OrgNode[] {
   return nodes.filter((n) => n.reportsToId === parentId);
 }
 
+function channelSidebarLabel(threadId: string): string {
+  if (threadId === "general") return "general";
+  if (threadId === "escalations") return "escalations";
+  if (threadId.startsWith("agent-")) return threadId.slice("agent-".length);
+  return threadId;
+}
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [companyId, setCompanyId] = useState("");
-  const [nav, setNav] = useState<NavId>("dashboard");
+  const [nav, setNav] = useState<NavId>("channels");
+  const [activeChannelId, setActiveChannelId] = useState("general");
   const [inboxTab, setInboxTab] = useState<InboxTab>("mine");
   const [inboxSearch, setInboxSearch] = useState("");
   const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
@@ -103,6 +112,25 @@ export function App() {
     if (!selectedOrgNode) return;
     setAgentFileDraft({ ...selectedOrgNode.files });
   }, [selectedOrgNode?.id, selectedOrgNode?.files.agentMd, selectedOrgNode?.files.heartbeatMd, selectedOrgNode?.files.soulMd, selectedOrgNode?.files.toolsMd]);
+
+  const channelIds = useMemo(() => {
+    if (!bootstrap) return ["general", "escalations"] as string[];
+    const agentThreads = [...bootstrap.org]
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .map((n) => agentChannelThreadId(n.handle));
+    return ["general", "escalations", ...agentThreads];
+  }, [bootstrap]);
+
+  useEffect(() => {
+    if (!channelIds.includes(activeChannelId)) setActiveChannelId("general");
+  }, [channelIds, activeChannelId]);
+
+  const channelMessages = useMemo(() => {
+    if (!bootstrap) return [];
+    return [...bootstrap.messages]
+      .filter((m) => m.threadId === activeChannelId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }, [bootstrap, activeChannelId]);
 
   const groupedCards = useMemo(() => {
     if (!bootstrap) return {};
@@ -202,7 +230,8 @@ export function App() {
     const data = await response.json();
     const cid = data.company.id;
     await load(cid);
-    setNav("dashboard");
+    setActiveChannelId("general");
+    setNav("channels");
     let polls = 0;
     const poll = window.setInterval(() => {
       void load(cid);
@@ -289,14 +318,14 @@ export function App() {
     if (bootstrap) await load(bootstrap.company.id);
   }
 
-  async function postMessageGeneral() {
+  async function postChannelMessage() {
     if (!bootstrap || !newMessage.body.trim()) return;
     await fetch(`${API}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         companyId: bootstrap.company.id,
-        threadId: "general",
+        threadId: activeChannelId,
         authorType: "user",
         authorId: null,
         body: newMessage.body.trim(),
@@ -484,6 +513,13 @@ export function App() {
           Dashboard
         </button>
 
+        <button type="button" className={`navItem ${nav === "channels" ? "active" : ""}`} onClick={() => setNav("channels")}>
+          <Icon>
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </Icon>
+          Channels
+        </button>
+
         <button type="button" className={`navItem ${nav === "inbox" ? "active" : ""}`} onClick={() => setNav("inbox")}>
           <Icon>
             <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
@@ -522,11 +558,21 @@ export function App() {
           Org
         </button>
 
-        <div className="navSection">Agents</div>
+        <div className="navSection">People</div>
         <ul className="agentList">
           {bootstrap.org.map((node) => (
             <li key={node.id}>
-              <strong>@{node.handle}</strong> · {node.role}
+              <button
+                type="button"
+                className="channelJump"
+                onClick={() => {
+                  setActiveChannelId(agentChannelThreadId(node.handle));
+                  setNav("channels");
+                }}
+              >
+                <strong>@{node.handle}</strong>
+                <span className="muted"> · {node.role}</span>
+              </button>
             </li>
           ))}
         </ul>
@@ -558,21 +604,6 @@ export function App() {
                 </div>
               </div>
 
-              <div className="callout">
-                <h2>CEO execution</h2>
-                <p className="muted">
-                  Codex runs automatically right after you create the company (unless kickoff is blocked). Refresh or open <strong>#general</strong> to see the CEO summary when it finishes. The CEO must include a fenced <code>json</code> plan block to materialize hires and cards — use <strong>Re-run</strong> if the model skipped JSON or you want another pass.
-                </p>
-                {ceoKickoffCard?.status === "blocked" ? (
-                  <p className="calloutWarn">Kickoff is blocked: clarify the goal with @ceo in #general (Inbox), then set the card to Doing on the Board.</p>
-                ) : (
-                  <button type="button" className="btnPrimary" disabled={ceoRunLoading} onClick={runCeoKickoff}>
-                    {ceoRunLoading ? "Running Codex…" : "Re-run CEO kickoff (Codex)"}
-                  </button>
-                )}
-                {ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
-              </div>
-
               <div className="panelBlock">
                 <h2>Recent activity</h2>
                 {recentMessages.map((m) => {
@@ -589,6 +620,74 @@ export function App() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </>
+        )}
+
+        {nav === "channels" && (
+          <>
+            <header className="mainHeader">
+              <h1>CHANNELS</h1>
+            </header>
+            <div className="mainBody channelsBody">
+              <nav className="channelList" aria-label="Channel list">
+                {channelIds.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`channelListItem ${activeChannelId === id ? "active" : ""}`}
+                    onClick={() => setActiveChannelId(id)}
+                  >
+                    #{channelSidebarLabel(id)}
+                  </button>
+                ))}
+              </nav>
+              <div className="channelPane">
+                <div className="channelHeader">
+                  <h2>#{channelSidebarLabel(activeChannelId)}</h2>
+                  {activeChannelId === agentChannelThreadId("ceo") && ceoKickoffCard ? (
+                    ceoKickoffCard.status === "blocked" ? (
+                      <p className="calloutWarn channelHeaderNote">
+                        Kickoff is blocked: reply here or in #general, then move the kickoff card to Doing on the Board.
+                      </p>
+                    ) : (
+                      <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runCeoKickoff()}>
+                        {ceoRunLoading ? "Running Codex…" : "Re-run CEO kickoff (Codex)"}
+                      </button>
+                    )
+                  ) : null}
+                  {activeChannelId === agentChannelThreadId("ceo") && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
+                </div>
+                <div className="channelTimeline">
+                  {channelMessages.map((m) => {
+                    const author =
+                      m.authorType === "system"
+                        ? "system"
+                        : m.authorType === "user"
+                          ? OPERATOR_HANDLE
+                          : bootstrap.org.find((o) => o.id === m.authorId)?.handle ?? "agent";
+                    return (
+                      <div key={m.id} className="channelMsg">
+                        <div className="channelMsgMeta">
+                          <strong>@{author}</strong>
+                          <span className="muted">{new Date(m.createdAt).toLocaleString()}</span>
+                        </div>
+                        <div className="channelMsgBody">{m.body}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="channelComposer">
+                  <textarea
+                    placeholder={`Message #${channelSidebarLabel(activeChannelId)} as @${OPERATOR_HANDLE}…`}
+                    value={newMessage.body}
+                    onChange={(e) => setNewMessage({ body: e.target.value })}
+                  />
+                  <button type="button" className="btnPrimary" onClick={() => void postChannelMessage()}>
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           </>
@@ -671,18 +770,6 @@ export function App() {
               </div>
 
               <div className="sectionDivider">Other</div>
-
-              <div className="inboxComposer">
-                <strong>Message #general (as @boss)</strong>
-                <textarea
-                  value={newMessage.body}
-                  onChange={(e) => setNewMessage({ body: e.target.value })}
-                  placeholder="Reply to CEO or @mention an agent…"
-                />
-                <button type="button" onClick={postMessageGeneral}>
-                  Send
-                </button>
-              </div>
 
               <div className="escalateInline">
                 <strong>Test escalation</strong>

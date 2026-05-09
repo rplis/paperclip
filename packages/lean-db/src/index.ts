@@ -1,14 +1,15 @@
-import type {
-  AgentMarkdownPack,
-  BoardCard,
-  BoardColumn,
-  ChannelMessage,
-  Company,
-  Escalation,
-  Goal,
-  OrgNode,
-  CardStatus,
-  Role
+import {
+  agentChannelThreadId,
+  type AgentMarkdownPack,
+  type BoardCard,
+  type BoardColumn,
+  type ChannelMessage,
+  type Company,
+  type Escalation,
+  type Goal,
+  type OrgNode,
+  type CardStatus,
+  type Role
 } from "@lean/shared";
 import { randomUUID } from "node:crypto";
 import { defaultCeoMarkdownPack, defaultHireMarkdownPack, mergeAgentPack } from "./agent-templates.js";
@@ -113,16 +114,17 @@ export class LeanStore {
       threadId: "general",
       authorType: "system",
       authorId: null,
-      body: "CEO is hired and the first board card is assigned (org structure + hiring). Codex runs the kickoff automatically after company creation (unless the card is blocked); use Dashboard **Re-run CEO kickoff** or Board **Run Codex** for another pass.",
+      body: "CEO is hired; the kickoff card is on the Board. Codex runs automatically when that card is not blocked. Open Channels in the sidebar: #general for everyone, #escalations for routing, and one channel per agent (e.g. @ceo).",
       linkedCardId: kickoff.id
     });
 
+    const ceoThread = agentChannelThreadId(ceo.handle);
     const goalNeedsClarification = goal.description.trim().length < 40;
     if (goalNeedsClarification) {
       this.updateCardStatus(kickoff.id, "blocked");
       this.createMessage({
         companyId: company.id,
-        threadId: "general",
+        threadId: ceoThread,
         authorType: "agent",
         authorId: ceo.id,
         body: "@boss I am not certain we have enough goal detail to lock an org structure. Please clarify: who is the customer, timeline or deadline, and what counts as success (metric or milestone). Once you reply, I will unblock hiring and structure work.",
@@ -133,10 +135,10 @@ export class LeanStore {
 
     this.createMessage({
       companyId: company.id,
-      threadId: "general",
+      threadId: ceoThread,
       authorType: "agent",
       authorId: ceo.id,
-      body: "Goal looks clear enough to draft the org chart and hiring sequence. I will complete the assigned card first, then propose hires (no hires until structure is defined). If I hit ambiguity I will @boss before proceeding.",
+      body: "Goal looks clear enough to draft the org chart and hiring sequence. I will complete the assigned card first, then propose hires (no hires until structure is defined). If I hit ambiguity I will @boss in #general before proceeding.",
       linkedCardId: kickoff.id
     });
     return { ceo, kickoff };
@@ -282,12 +284,21 @@ export class LeanStore {
     const targetHandle = toOperator
       ? company?.operatorHandle ?? "boss"
       : this.orgNodes.get(toOrgNodeId ?? "")?.handle ?? "unknown";
+    const escBody = `Escalation from @${from.handle} to @${targetHandle}: ${input.question}`;
     this.createMessage({
       companyId: input.companyId,
       threadId: "escalations",
       authorType: "system",
       authorId: null,
-      body: `Escalation from @${from.handle} to @${targetHandle}: ${input.question}`,
+      body: escBody,
+      linkedCardId: input.cardId
+    });
+    this.createMessage({
+      companyId: input.companyId,
+      threadId: agentChannelThreadId(from.handle),
+      authorType: "system",
+      authorId: null,
+      body: escBody,
       linkedCardId: input.cardId
     });
     return escalation;
@@ -369,6 +380,14 @@ export class LeanStore {
         });
         handleToId.set(handle, node.id);
         createdHires += 1;
+        this.createMessage({
+          companyId,
+          threadId: agentChannelThreadId(handle),
+          authorType: "system",
+          authorId: null,
+          body: `Channel for @${handle} is ready — use this thread with @${handle} and @boss as needed.`,
+          linkedCardId: null
+        });
       } catch (err) {
         errors.push(`hire @${handle}: ${err instanceof Error ? err.message : String(err)}`);
       }
