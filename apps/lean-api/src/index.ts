@@ -28,6 +28,8 @@ Title: ${kickoff.title}
 Description:
 ${kickoff.description}
 
+The Board also has five separate checklist cards (Backlog) for structure, roles, manifests, hiring discipline, and @boss clarification—treat those as the task breakdown.
+
 Deliver a concise written plan: (1) proposed reporting org under you, (2) first hires in order with role titles, (3) skills manifest outline per subtree, (4) any remaining questions for @boss only if blocking.
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block so the app can create org nodes and board cards. Use this shape (example — replace with your real plan; list managers before their reports in "hires"):
@@ -137,6 +139,7 @@ app.post("/api/companies", (req, res) => {
   try {
     const input = createCompanySchema.parse(req.body);
     const created = store.createCompany(input);
+    runCompanyHeartbeat(created.company.id);
     res.status(201).json(created);
     void runCeoKickoffCodex(created.company.id).catch((err) => {
       // eslint-disable-next-line no-console
@@ -160,6 +163,63 @@ app.post("/api/companies/:companyId/ceo/run", async (req, res) => {
     applied: out.applied,
     planParsed: out.planParsed
   });
+});
+
+const lastInReviewSnapshotByCompany = new Map<string, number>();
+
+function maybePostCeoBoardTriage(
+  companyId: string,
+  r: { promoted: Array<{ cardId: string; assigneeHandle: string }>; inReviewCount: number }
+) {
+  let prev = lastInReviewSnapshotByCompany.get(companyId);
+  if (prev === undefined) prev = -1;
+
+  const company = store.companies.get(companyId);
+  const ceo = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "ceo");
+  if (!company || !ceo) return;
+
+  if (r.inReviewCount > 0) {
+    if (prev === r.inReviewCount) return;
+    lastInReviewSnapshotByCompany.set(companyId, r.inReviewCount);
+    store.createMessage({
+      companyId,
+      threadId: dmThreadId(ceo.handle, company.operatorHandle),
+      authorType: "agent",
+      authorId: ceo.id,
+      body: `Board check: ${r.inReviewCount} card(s) are In review—ping @${company.operatorHandle} in this thread or #general if you need a decision so work can keep moving.`,
+      linkedCardId: null
+    });
+    return;
+  }
+
+  if (prev > 0) {
+    lastInReviewSnapshotByCompany.set(companyId, 0);
+    store.createMessage({
+      companyId,
+      threadId: dmThreadId(ceo.handle, company.operatorHandle),
+      authorType: "agent",
+      authorId: ceo.id,
+      body: "Board check: nothing is In review right now—good to pull the next priorities from Backlog when you are ready.",
+      linkedCardId: null
+    });
+    return;
+  }
+
+  if (prev === -1) {
+    lastInReviewSnapshotByCompany.set(companyId, 0);
+  }
+}
+
+function runCompanyHeartbeat(companyId: string) {
+  const r = store.runHeartbeatsForCompany(companyId);
+  maybePostCeoBoardTriage(companyId, r);
+  return r;
+}
+
+app.post("/api/companies/:companyId/heartbeat", (req, res) => {
+  const companyId = req.params.companyId;
+  if (!store.companies.get(companyId)) return res.status(404).json({ error: "Company not found" });
+  res.json(runCompanyHeartbeat(companyId));
 });
 
 app.get("/api/companies/:companyId/bootstrap", (req, res) => {
@@ -278,7 +338,21 @@ app.get("/api/cards/:id/run-log", (req, res) => {
 });
 
 const port = Number(process.env.PORT ?? 3200);
+const heartbeatMs = Number(process.env.LEAN_HEARTBEAT_MS ?? 60_000);
+
 app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`lean-api listening on http://localhost:${port}`);
+  // eslint-disable-next-line no-console
+  console.log(`[lean-api] agent heartbeats every ${heartbeatMs}ms (LEAN_HEARTBEAT_MS)`);
+  setInterval(() => {
+    for (const companyId of store.companies.keys()) {
+      try {
+        runCompanyHeartbeat(companyId);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[lean-api] heartbeat failed", companyId, err);
+      }
+    }
+  }, heartbeatMs);
 });

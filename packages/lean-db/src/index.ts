@@ -103,18 +103,50 @@ export class LeanStore {
       companyId: company.id,
       title: "Define company structure and hire team",
       description:
-        "1) Map reporting lines under the CEO. 2) Decide first roles to hire (e.g. CTO, leads). 3) For each subtree, attach a skills manifest for that team. 4) Create hires only after structure is clear; each manager hires their own reports. 5) If anything about the goal is ambiguous, ask @boss in Messages (DM or #general) before committing the org plan.",
+        "Complete the five checklist cards on the Board (Backlog, assigned to you)—each is a separate task. When reporting lines, roles, and manifests are clear, close this card and use a Codex run with the JSON plan block to add hires. If the goal is still ambiguous, stay in In review and ask @boss in Messages first.",
       assigneeOrgNodeId: ceo.id,
       goalId: goal.id
     });
     this.updateCardStatus(kickoff.id, "in_progress");
+
+    const checklist: Array<{ title: string; description: string }> = [
+      {
+        title: "Map reporting lines under the CEO",
+        description: "Document the org tree from the CEO down so hiring and delegation stay consistent."
+      },
+      {
+        title: "Decide first roles to hire (e.g. CTO, leads)",
+        description: "Pick the first leadership and IC roles you need before anyone joins the board."
+      },
+      {
+        title: "Attach a skills manifest for each subtree team",
+        description: "For each branch under a manager, list the skills or capabilities that subtree owns."
+      },
+      {
+        title: "Create hires only after structure is clear",
+        description: "Each manager should hire their own reports via Org once reporting lines and roles are agreed."
+      },
+      {
+        title: "If the goal is ambiguous, ask @boss before committing the org plan",
+        description: "Use Messages (DM with @boss or #general) before locking structure if anything about the goal is unclear."
+      }
+    ];
+    for (const item of checklist) {
+      this.createCard({
+        companyId: company.id,
+        title: item.title,
+        description: item.description,
+        assigneeOrgNodeId: ceo.id,
+        goalId: goal.id
+      });
+    }
 
     this.createMessage({
       companyId: company.id,
       threadId: "general",
       authorType: "system",
       authorId: null,
-      body: "CEO is hired; the kickoff card is on the Board. Codex runs automatically when that card is not blocked. Use Messages for direct threads with each person (@boss ↔ @ceo, etc.) and #general for company-wide posts.",
+      body: "CEO is hired. The kickoff card is In progress and five checklist tasks were added to Backlog. Codex runs automatically when the kickoff card is not in review. Use Messages for DMs with each person (@boss ↔ @ceo, etc.) and #general for company-wide posts.",
       linkedCardId: kickoff.id
     });
 
@@ -138,7 +170,7 @@ export class LeanStore {
       threadId: ceoDm,
       authorType: "agent",
       authorId: ceo.id,
-      body: "Goal looks clear enough to draft the org chart and hiring sequence. I will complete the assigned card first, then propose hires (no hires until structure is defined). If I hit ambiguity I will @boss in #general before proceeding.",
+        body: "Goal looks clear enough to draft the org chart and hiring sequence. I will work through the checklist cards on the Board first, then propose hires (no hires until structure is defined). If I hit ambiguity I will @boss in #general before proceeding.",
       linkedCardId: kickoff.id
     });
     return { ceo, kickoff };
@@ -412,6 +444,50 @@ export class LeanStore {
     }
 
     return { createdHires, createdCards, errors };
+  }
+
+  /**
+   * Simulated agent heartbeats: each org member with assigned cards may pull work from Backlog
+   * into In progress up to wipPerAssignee concurrent cards.
+   */
+  runHeartbeatsForCompany(
+    companyId: string,
+    wipPerAssignee = 2
+  ): { promoted: Array<{ cardId: string; assigneeHandle: string }>; inReviewCount: number } {
+    if (!this.companies.get(companyId)) return { promoted: [], inReviewCount: 0 };
+
+    const cardsInCompany = [...this.cards.values()].filter((c) => c.companyId === companyId);
+    const inReviewCount = cardsInCompany.filter((c) => c.status === "in_review").length;
+
+    const byAssignee = new Map<string, BoardCard[]>();
+    for (const c of cardsInCompany) {
+      if (c.assigneeOrgNodeId == null) continue;
+      const arr = byAssignee.get(c.assigneeOrgNodeId) ?? [];
+      arr.push(c);
+      byAssignee.set(c.assigneeOrgNodeId, arr);
+    }
+
+    const orgInCompany = [...this.orgNodes.values()].filter((n) => n.companyId === companyId);
+    const promoted: Array<{ cardId: string; assigneeHandle: string }> = [];
+
+    for (const node of orgInCompany) {
+      const mine = byAssignee.get(node.id);
+      if (!mine?.length) continue;
+
+      while (
+        mine.filter((c) => c.status === "in_progress").length < wipPerAssignee &&
+        mine.some((c) => c.status === "backlog")
+      ) {
+        const backlog = mine
+          .filter((c) => c.status === "backlog")
+          .sort((a, b) => a.title.localeCompare(b.title));
+        const next = backlog[0]!;
+        this.updateCardStatus(next.id, "in_progress");
+        promoted.push({ cardId: next.id, assigneeHandle: node.handle });
+      }
+    }
+
+    return { promoted, inReviewCount };
   }
 }
 

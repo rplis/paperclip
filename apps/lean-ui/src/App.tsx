@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   dmThreadId,
   type BoardCard,
@@ -133,6 +133,7 @@ export function App() {
   const [ceoRunLoading, setCeoRunLoading] = useState(false);
   const [ceoRunError, setCeoRunError] = useState<string | null>(null);
   const [boardDetailCardId, setBoardDetailCardId] = useState<string | null>(null);
+  const [lastWorkspaceSyncAt, setLastWorkspaceSyncAt] = useState<number | null>(null);
 
   const orgOptions = bootstrap?.org ?? [];
 
@@ -260,13 +261,14 @@ export function App() {
     return filtered;
   }, [bootstrap, inboxTab, inboxSearch, readIds]);
 
-  async function load(company: string) {
+  const load = useCallback(async (company: string) => {
     const response = await fetch(`${API}/companies/${company}/bootstrap`);
     if (!response.ok) return;
     const data = (await response.json()) as Bootstrap;
     setBootstrap(data);
     setCompanyId(company);
-  }
+    setLastWorkspaceSyncAt(Date.now());
+  }, []);
 
   async function createCompanyAndLoad() {
     if (!createCompany.name.trim() || !createCompany.goalDescription.trim()) return;
@@ -454,6 +456,17 @@ export function App() {
   useEffect(() => {
     if (companyId) void load(companyId);
   }, []);
+
+  const HEARTBEAT_POLL_MS = 60_000;
+
+  useEffect(() => {
+    if (!bootstrap?.company.id) return;
+    const cid = bootstrap.company.id;
+    const id = window.setInterval(() => {
+      void load(cid);
+    }, HEARTBEAT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [bootstrap?.company.id, load]);
 
   const dashStats = useMemo(() => {
     if (!bootstrap) return { total: 0, inReview: 0, inProgress: 0, team: 0 };
@@ -660,6 +673,10 @@ export function App() {
           <>
             <header className="mainHeader">
               <h1>DASHBOARD</h1>
+              <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                The API promotes assigned Backlog cards to In progress every minute (LEAN_HEARTBEAT_MS). Last refresh:{" "}
+                {lastWorkspaceSyncAt ? new Date(lastWorkspaceSyncAt).toLocaleTimeString() : "—"}
+              </p>
             </header>
             <div className="mainBody">
               <div className="dashGrid">
