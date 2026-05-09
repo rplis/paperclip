@@ -68,10 +68,17 @@ export interface ChannelMessage {
   createdAt: string;
 }
 
-/** Slack-style thread id for one agent (messages from / to that agent). */
-export function agentChannelThreadId(handle: string): string {
+function normalizeDmHandle(handle: string): string {
   const h = handle.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  return h ? `agent-${h}` : "agent-unknown";
+  return h.length > 0 ? h : "unknown";
+}
+
+/** Direct-message thread between two parties (sorted handles, stable id). */
+export function dmThreadId(handleA: string, handleB: string): string {
+  const a = normalizeDmHandle(handleA);
+  const b = normalizeDmHandle(handleB);
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return `dm-${x}-${y}`;
 }
 
 export interface Escalation {

@@ -1,5 +1,5 @@
 import {
-  agentChannelThreadId,
+  dmThreadId,
   type AgentMarkdownPack,
   type BoardCard,
   type BoardColumn,
@@ -103,7 +103,7 @@ export class LeanStore {
       companyId: company.id,
       title: "Define company structure and hire team",
       description:
-        "1) Map reporting lines under the CEO. 2) Decide first roles to hire (e.g. CTO, leads). 3) For each subtree, attach a skills manifest for that team. 4) Create hires only after structure is clear; each manager hires their own reports. 5) If anything about the goal is ambiguous, ask @boss in #general before committing the org plan.",
+        "1) Map reporting lines under the CEO. 2) Decide first roles to hire (e.g. CTO, leads). 3) For each subtree, attach a skills manifest for that team. 4) Create hires only after structure is clear; each manager hires their own reports. 5) If anything about the goal is ambiguous, ask @boss in Messages (DM or #general) before committing the org plan.",
       assigneeOrgNodeId: ceo.id,
       goalId: goal.id
     });
@@ -114,17 +114,17 @@ export class LeanStore {
       threadId: "general",
       authorType: "system",
       authorId: null,
-      body: "CEO is hired; the kickoff card is on the Board. Codex runs automatically when that card is not blocked. Open Channels in the sidebar: #general for everyone, #escalations for routing, and one channel per agent (e.g. @ceo).",
+      body: "CEO is hired; the kickoff card is on the Board. Codex runs automatically when that card is not blocked. Use Messages for direct threads with each person (@boss ↔ @ceo, etc.) and #general for company-wide posts.",
       linkedCardId: kickoff.id
     });
 
-    const ceoThread = agentChannelThreadId(ceo.handle);
+    const ceoDm = dmThreadId(ceo.handle, company.operatorHandle);
     const goalNeedsClarification = goal.description.trim().length < 40;
     if (goalNeedsClarification) {
       this.updateCardStatus(kickoff.id, "blocked");
       this.createMessage({
         companyId: company.id,
-        threadId: ceoThread,
+        threadId: ceoDm,
         authorType: "agent",
         authorId: ceo.id,
         body: "@boss I am not certain we have enough goal detail to lock an org structure. Please clarify: who is the customer, timeline or deadline, and what counts as success (metric or milestone). Once you reply, I will unblock hiring and structure work.",
@@ -135,7 +135,7 @@ export class LeanStore {
 
     this.createMessage({
       companyId: company.id,
-      threadId: ceoThread,
+      threadId: ceoDm,
       authorType: "agent",
       authorId: ceo.id,
       body: "Goal looks clear enough to draft the org chart and hiring sequence. I will complete the assigned card first, then propose hires (no hires until structure is defined). If I hit ambiguity I will @boss in #general before proceeding.",
@@ -293,9 +293,10 @@ export class LeanStore {
       body: escBody,
       linkedCardId: input.cardId
     });
+    const dmPeer = toOperator ? (company?.operatorHandle ?? "boss") : (this.orgNodes.get(toOrgNodeId ?? "")?.handle ?? targetHandle);
     this.createMessage({
       companyId: input.companyId,
-      threadId: agentChannelThreadId(from.handle),
+      threadId: dmThreadId(from.handle, dmPeer),
       authorType: "system",
       authorId: null,
       body: escBody,
@@ -380,12 +381,13 @@ export class LeanStore {
         });
         handleToId.set(handle, node.id);
         createdHires += 1;
+        const op = this.companies.get(companyId)?.operatorHandle ?? "boss";
         this.createMessage({
           companyId,
-          threadId: agentChannelThreadId(handle),
+          threadId: dmThreadId(handle, op),
           authorType: "system",
           authorId: null,
-          body: `Channel for @${handle} is ready — use this thread with @${handle} and @boss as needed.`,
+          body: `Direct thread @${op} ↔ @${handle} is open — use Messages to coordinate with @${handle}.`,
           linkedCardId: null
         });
       } catch (err) {

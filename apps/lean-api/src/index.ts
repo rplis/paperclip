@@ -2,7 +2,7 @@ import cors from "cors";
 import express from "express";
 import { store } from "@lean/db";
 import {
-  agentChannelThreadId,
+  dmThreadId,
   createCardSchema,
   createCompanySchema,
   createEscalationSchema,
@@ -100,7 +100,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
 
     store.createMessage({
       companyId,
-      threadId: agentChannelThreadId(ceo.handle),
+      threadId: dmThreadId(ceo.handle, company.operatorHandle),
       authorType: "agent",
       authorId: ceo.id,
       body,
@@ -118,7 +118,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
     const msg = error instanceof Error ? error.message : "Codex run failed";
     store.createMessage({
       companyId,
-      threadId: agentChannelThreadId(ceo.handle),
+      threadId: dmThreadId(ceo.handle, company.operatorHandle),
       authorType: "agent",
       authorId: ceo.id,
       body: `CEO Codex run failed: ${msg}`,

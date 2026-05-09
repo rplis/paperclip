@@ -719,6 +719,80 @@ a {
   min-width: 120px;
 }
 
+.orgWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: 8px;
+}
+
+.orgRoster {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  background: #fafbfc;
+}
+
+.orgRosterTitle {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.orgRosterHint {
+  margin: 0 0 14px;
+}
+
+.orgRosterTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.orgRosterTable th,
+.orgRosterTable td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.orgRosterTable th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.orgRosterDm {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.statusPill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.statusPill.status-idle {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.statusPill.status-working {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.statusPill.status-blocked {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .orgPage {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.2fr);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  agentChannelThreadId,
+  dmThreadId,
   type BoardCard,
   type BoardColumn,
   type ChannelMessage,
@@ -53,11 +53,27 @@ function orgChildren(nodes: OrgNode[], parentId: string): OrgNode[] {
   return nodes.filter((n) => n.reportsToId === parentId);
 }
 
-function channelSidebarLabel(threadId: string): string {
+function threadSidebarLabel(threadId: string): string {
   if (threadId === "general") return "general";
   if (threadId === "escalations") return "escalations";
-  if (threadId.startsWith("agent-")) return threadId.slice("agent-".length);
+  const m = /^dm-([a-z0-9_-]+)-([a-z0-9_-]+)$/.exec(threadId);
+  if (m) return `DM · @${m[1]} ↔ @${m[2]}`;
   return threadId;
+}
+
+function threadNavTitle(threadId: string): string {
+  if (threadId === "general") return "#general";
+  if (threadId === "escalations") return "#escalations";
+  return threadSidebarLabel(threadId);
+}
+
+type WorkStatus = "idle" | "working" | "blocked";
+
+function workStatusForNode(nodeId: string, cards: BoardCard[]): WorkStatus {
+  const mine = cards.filter((c) => c.assigneeOrgNodeId === nodeId);
+  if (mine.some((c) => c.status === "blocked")) return "blocked";
+  if (mine.some((c) => c.status === "doing")) return "working";
+  return "idle";
 }
 
 export function App() {
@@ -115,10 +131,18 @@ export function App() {
 
   const channelIds = useMemo(() => {
     if (!bootstrap) return ["general", "escalations"] as string[];
-    const agentThreads = [...bootstrap.org]
+    const op = bootstrap.company.operatorHandle;
+    const dms = [...bootstrap.org]
       .sort((a, b) => a.handle.localeCompare(b.handle))
-      .map((n) => agentChannelThreadId(n.handle));
-    return ["general", "escalations", ...agentThreads];
+      .map((n) => dmThreadId(op, n.handle));
+    return ["general", "escalations", ...dms];
+  }, [bootstrap]);
+
+  const ceoDmThreadId = useMemo(() => {
+    if (!bootstrap) return null;
+    const ceo = bootstrap.org.find((n) => n.handle === "ceo");
+    if (!ceo) return null;
+    return dmThreadId(bootstrap.company.operatorHandle, ceo.handle);
   }, [bootstrap]);
 
   useEffect(() => {
@@ -227,10 +251,10 @@ export function App() {
         goalDescription: createCompany.goalDescription.trim()
       })
     });
-    const data = await response.json();
+    const data = (await response.json()) as { company: Company };
     const cid = data.company.id;
     await load(cid);
-    setActiveChannelId("general");
+    setActiveChannelId(dmThreadId(data.company.operatorHandle, "ceo"));
     setNav("channels");
     let polls = 0;
     const poll = window.setInterval(() => {
@@ -517,7 +541,7 @@ export function App() {
           <Icon>
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </Icon>
-          Channels
+          Messages
         </button>
 
         <button type="button" className={`navItem ${nav === "inbox" ? "active" : ""}`} onClick={() => setNav("inbox")}>
@@ -566,7 +590,7 @@ export function App() {
                 type="button"
                 className="channelJump"
                 onClick={() => {
-                  setActiveChannelId(agentChannelThreadId(node.handle));
+                  setActiveChannelId(dmThreadId(bootstrap.company.operatorHandle, node.handle));
                   setNav("channels");
                 }}
               >
@@ -628,7 +652,7 @@ export function App() {
         {nav === "channels" && (
           <>
             <header className="mainHeader">
-              <h1>CHANNELS</h1>
+              <h1>MESSAGES</h1>
             </header>
             <div className="mainBody channelsBody">
               <nav className="channelList" aria-label="Channel list">
@@ -639,17 +663,17 @@ export function App() {
                     className={`channelListItem ${activeChannelId === id ? "active" : ""}`}
                     onClick={() => setActiveChannelId(id)}
                   >
-                    #{channelSidebarLabel(id)}
+                    {threadNavTitle(id)}
                   </button>
                 ))}
               </nav>
               <div className="channelPane">
                 <div className="channelHeader">
-                  <h2>#{channelSidebarLabel(activeChannelId)}</h2>
-                  {activeChannelId === agentChannelThreadId("ceo") && ceoKickoffCard ? (
+                  <h2>{threadNavTitle(activeChannelId)}</h2>
+                  {ceoDmThreadId && activeChannelId === ceoDmThreadId && ceoKickoffCard ? (
                     ceoKickoffCard.status === "blocked" ? (
                       <p className="calloutWarn channelHeaderNote">
-                        Kickoff is blocked: reply here or in #general, then move the kickoff card to Doing on the Board.
+                        Kickoff is blocked: reply in this DM or #general, then move the kickoff card to Doing on the Board.
                       </p>
                     ) : (
                       <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runCeoKickoff()}>
@@ -657,7 +681,7 @@ export function App() {
                       </button>
                     )
                   ) : null}
-                  {activeChannelId === agentChannelThreadId("ceo") && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
+                  {ceoDmThreadId && activeChannelId === ceoDmThreadId && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
                 </div>
                 <div className="channelTimeline">
                   {channelMessages.map((m) => {
@@ -680,7 +704,7 @@ export function App() {
                 </div>
                 <div className="channelComposer">
                   <textarea
-                    placeholder={`Message #${channelSidebarLabel(activeChannelId)} as @${OPERATOR_HANDLE}…`}
+                    placeholder={`Message in ${threadNavTitle(activeChannelId)} (as @${OPERATOR_HANDLE})…`}
                     value={newMessage.body}
                     onChange={(e) => setNewMessage({ body: e.target.value })}
                   />
@@ -815,7 +839,52 @@ export function App() {
             <header className="mainHeader">
               <h1>ORG</h1>
             </header>
-            <div className="mainBody orgPage">
+            <div className="mainBody orgWrap">
+              <section className="orgRoster" aria-label="Team roster">
+                <h2 className="orgRosterTitle">People</h2>
+                <p className="muted small orgRosterHint">Status reflects assigned board cards: blocked → blocked, doing → working, otherwise idle.</p>
+                <table className="orgRosterTable">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Handle</th>
+                      <th>Role</th>
+                      <th>Status</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...bootstrap.org]
+                      .sort((a, b) => a.handle.localeCompare(b.handle))
+                      .map((node) => {
+                        const ws = workStatusForNode(node.id, bootstrap.cards);
+                        return (
+                          <tr key={node.id}>
+                            <td>{node.name}</td>
+                            <td>@{node.handle}</td>
+                            <td>{node.role}</td>
+                            <td>
+                              <span className={`statusPill status-${ws}`}>{ws}</span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btnOutline orgRosterDm"
+                                onClick={() => {
+                                  setActiveChannelId(dmThreadId(bootstrap.company.operatorHandle, node.handle));
+                                  setNav("channels");
+                                }}
+                              >
+                                Message
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </section>
+              <div className="orgPage">
               <div className="orgTree">{renderOrgTree(bootstrap.org, null, 0)}</div>
               <div className="orgSide">
                 {selectedOrgNode ? (
@@ -913,6 +982,7 @@ export function App() {
                     <textarea value={newNode.toolsMd} onChange={(e) => setNewNode((s) => ({ ...s, toolsMd: e.target.value }))} spellCheck={false} />
                   </details>
                 </div>
+              </div>
               </div>
             </div>
           </>

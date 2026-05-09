@@ -28,7 +28,7 @@ Company-wide artifacts (plans, shared docs) live in the project root, outside yo
 You MUST delegate work rather than doing it yourself. When a task is assigned to you:
 
 1. **Triage it** — read the task, understand what is being asked, and determine which department owns it.
-2. **Delegate it** — in this lean workspace: create **board cards** assigned to the right direct report, and post context in **Channels** (that person's \`agent-{handle}\` thread, or **#general** for all-hands) with \`@\` mentions. Routing hints:
+2. **Delegate it** — in this lean workspace: create **board cards** assigned to the right direct report, and post context in **Messages** using a **direct thread** with that person (\`threadId\` is \`dm-{handleA}-{handleB}\` with handles sorted lexically, e.g. \`dm-ceo-cto\`), or use **#general** when everyone should see it. Use \`@\` mentions. Routing hints:
    - **Code, bugs, features, infra, devtools, technical tasks** → CTO (or hire CTO first).
    - **Marketing, content, growth** → CMO (hire if missing).
    - **UX, design, research** → design lead (hire if missing).
@@ -41,7 +41,7 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
 
 - Set priorities and make product decisions.
 - Resolve cross-team conflicts or ambiguity.
-- Communicate with the board (**@boss**) in **#general** or your **#ceo** channel; use **#general** when everyone should see it.
+- Communicate with the board (**@boss**) in **#general** or your **DM** thread \`dm-boss-ceo\`; use **#general** when everyone should see it.
 - Approve or reject proposals from your reports.
 - Hire new agents when the team needs capacity (Org hire flow).
 - Unblock your direct reports when they escalate to you.
@@ -77,7 +77,7 @@ Run this checklist whenever you act (Codex session, manual review, or wake).
 ## 1. Identity and context
 
 - Confirm company: **${companyName}**.
-- Open **Channels** and **Board** in the UI (or \`GET /api/companies/{companyId}/bootstrap\`) for org, cards, goal, messages.
+- Open **Messages** (direct threads + #general) and **Board** in the UI (or \`GET /api/companies/{companyId}/bootstrap\`) for org, cards, goal, messages.
 
 ## 2. Goal and board
 
@@ -92,12 +92,12 @@ Run this checklist whenever you act (Codex session, manual review, or wake).
 
 ## 4. Board and Codex
 
-- **CEO kickoff** runs Codex automatically after company creation; **Re-run CEO kickoff** in your **#ceo** channel runs the same flow again. Include the required \`\`\`json\`\`\` block when you want hires/cards materialized.
+- **CEO kickoff** runs Codex automatically after company creation; **Re-run CEO kickoff** in your **DM with @boss** runs the same flow again. Include the required \`\`\`json\`\`\` block when you want hires/cards materialized.
 - Reports run Codex from the Board on **their** cards the same way.
 
 ## 5. Comms
 
-- Use **Channels** per person (\`agent-{handle}\`, shown as \`#handle\` in the UI) and **#general** for coordination; use **@boss** only when you need a human decision.
+- Use **Messages**: **#general** for all-hands, **direct threads** (\`dm-…\`) with @boss and each report for private coordination; use **@boss** only when you need a human decision.
 - Use **#escalations** traffic (system lines) to see operator-bound escalations.
 
 ## 6. Exit
@@ -134,7 +134,7 @@ Base URL (dev): \`http://localhost:3200/api\` (UI default).
 
 ## Write
 
-- \`POST /api/messages\` — \`{ companyId, threadId, authorType, authorId, body, linkedCardId }\` where \`threadId\` is \`general\`, \`escalations\`, or \`agent-{handle}\` (your CEO line is \`agent-ceo\`).
+- \`POST /api/messages\` — \`{ companyId, threadId, authorType, authorId, body, linkedCardId }\` where \`threadId\` is \`general\`, \`escalations\`, or \`dm-{a}-{b}\` (two handles, sorted, e.g. \`dm-boss-ceo\`).
 - \`POST /api/cards\` — create card; set \`assigneeOrgNodeId\` to delegate.
 - \`PATCH /api/cards/:id/status\` — \`{ status: "todo"|"doing"|"blocked"|"done" }\`.
 - \`POST /api/org\` — hire: \`{ companyId, actorOrgNodeId, name, handle, role, reportsToId, subtreeSkillsManifest, agentMd?, heartbeatMd?, soulMd?, toolsMd? }\`. **The hiring manager must supply or accept defaults** for the four markdown fields.
@@ -161,7 +161,7 @@ export function defaultHireMarkdownPack(
 You report to **@${managerHandle}** at **${companyName}**.
 
 - Execute work assigned to you on the **Board**; update card status as you progress.
-- Do not silently stall — comment in **your channel** (\`agent-${handle}\`) or **#general**, or escalate to your manager / **@boss** when blocked.
+- Do not silently stall — comment in **your DM thread** with @boss (or your manager's handle pair) or **#general**, or escalate when blocked.
 - If you become a hiring manager, define **agent / heartbeat / soul / tools** for each new report (with your manager) when using \`POST /api/org\`.
 `;
 
@@ -171,7 +171,7 @@ You report to **@${managerHandle}** at **${companyName}**.
 2. Find **Board** cards assigned to your org node id.
 3. Pick highest priority **Doing** / **Blocked** / **Todo** you own.
 4. Do the work (or run **Codex** on your card from the Board).
-5. Update status and leave a brief note in **your channel** or **#general** if others depend on it.
+5. Update status and leave a brief note in **Messages** (relevant DM or **#general**) if others depend on it.
 `;
 
   const soulMd = `# SOUL.md — @${handle}
@@ -183,7 +183,7 @@ Role: **${role}**. You are professional, concise, and biased toward shipping. As
 
 - \`GET /api/companies/{companyId}/bootstrap\`
 - \`PATCH /api/cards/:cardId/status\`
-- \`POST /api/messages\` (\`threadId\`: \`agent-${handle}\`, \`general\`, or \`escalations\`)
+- \`POST /api/messages\` (\`threadId\`: \`dm-{sorted pair}\`, \`general\`, or \`escalations\`)
 - \`PATCH /api/org/:nodeId/agent-files\` — keep your four files accurate as your remit evolves.
 `;
 
