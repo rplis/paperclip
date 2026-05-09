@@ -89,12 +89,12 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
       body = `Codex run finished (exit ${result.exitCode}). Log:\n\n${tail || "(no log lines)"}`;
     } else if (plan && (applied.createdHires > 0 || applied.createdCards > 0)) {
       const warn = applied.errors.length ? ` Notes: ${applied.errors.join(" · ")}` : "";
-      body = `Codex exit 0. Applied plan to the workspace: ${applied.createdHires} new hire(s), ${applied.createdCards} new card(s). Open **Org** and **Board** to see them. Kickoff card marked done.${warn}`;
+      body = `Codex exit 0. Applied plan to the workspace: ${applied.createdHires} new hire(s), ${applied.createdCards} new card(s). Open Org and Board in the sidebar to review. Kickoff card marked done.${warn}`;
     } else if (plan) {
       body = `Codex exit 0. Parsed the JSON plan but created no hires/cards (${applied.errors.join(" · ") || "empty or invalid entries"}).`;
     } else {
       const preview = raw.replace(/```json[\s\S]*?```/gi, "[json plan omitted]").slice(0, 1200);
-      body = `Codex exit 0 but no fenced \`\`\`json\`\`\` block was found, so Org/Board were not updated. Re-run after the model emits a valid JSON plan block. Log preview:\n\n${preview || "(empty)"}`;
+      body = `Codex exit 0 but no fenced json code block was found, so Org and Board were not updated. Re-run after the model emits a valid JSON plan block. Log preview:\n\n${preview || "(empty)"}`;
     }
 
     store.createMessage({
