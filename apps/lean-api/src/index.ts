@@ -8,7 +8,8 @@ import {
   createEscalationSchema,
   createMessageSchema,
   createOrgNodeSchema,
-  patchOrgAgentFilesBodySchema
+  patchOrgAgentFilesBodySchema,
+  updateCardStatusSchema
 } from "@lean/shared";
 import { runCodexForCard } from "@lean/runner-codex";
 
@@ -61,12 +62,12 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
       c.title.includes("Define company structure")
   );
   if (!kickoff) return { ok: false, httpStatus: 404, error: "Kickoff card not found" };
-  if (kickoff.status === "blocked") {
+  if (kickoff.status === "in_review") {
     return {
       ok: false,
       httpStatus: 409,
       error:
-        "Kickoff is blocked until @boss clarifies the goal. Reply in Channels (#general or @ceo's channel), then move the kickoff card out of Blocked on the Board (or extend the goal description and recreate)."
+        "Kickoff is waiting in In review until @boss clarifies the goal. Reply in Messages (#general or CEO DM), then move the card to In progress on the Board (or extend the goal description and recreate)."
     };
   }
 
@@ -80,7 +81,7 @@ async function runCeoKickoffCodex(companyId: string): Promise<CeoKickoffCodexRes
     if (plan && result.exitCode === 0) {
       applied = store.applyCeoPlanJson(companyId, ceo.id, plan);
       if (applied.createdHires + applied.createdCards > 0) {
-        store.updateCardStatus(kickoff.id, "done");
+        store.updateCardStatus(kickoff.id, "closed");
       }
     }
 
@@ -207,12 +208,10 @@ app.post("/api/cards", (req, res) => {
 });
 
 app.patch("/api/cards/:cardId/status", (req, res) => {
-  const status = String(req.body?.status ?? "");
-  if (!["todo", "doing", "blocked", "done"].includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
-  }
+  const parsed = updateCardStatusSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid status" });
   try {
-    const card = store.updateCardStatus(req.params.cardId, status as "todo" | "doing" | "blocked" | "done");
+    const card = store.updateCardStatus(req.params.cardId, parsed.data.status);
     res.json(card);
   } catch (error) {
     res.status(404).json({ error: error instanceof Error ? error.message : "Card not found" });

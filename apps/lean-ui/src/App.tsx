@@ -71,9 +71,25 @@ type WorkStatus = "idle" | "working" | "blocked";
 
 function workStatusForNode(nodeId: string, cards: BoardCard[]): WorkStatus {
   const mine = cards.filter((c) => c.assigneeOrgNodeId === nodeId);
-  if (mine.some((c) => c.status === "blocked")) return "blocked";
-  if (mine.some((c) => c.status === "doing")) return "working";
+  if (mine.some((c) => c.status === "in_review")) return "blocked";
+  if (mine.some((c) => c.status === "in_progress")) return "working";
   return "idle";
+}
+
+function cardDescSnippet(text: string, maxLen = 140): string {
+  const single = text.replace(/\s+/g, " ").trim();
+  if (single.length <= maxLen) return single || "—";
+  return `${single.slice(0, maxLen)}…`;
+}
+
+function boardStatusLabel(s: BoardCard["status"]): string {
+  const labels: Record<BoardCard["status"], string> = {
+    backlog: "Backlog",
+    in_progress: "In progress",
+    in_review: "In review",
+    closed: "Closed"
+  };
+  return labels[s];
 }
 
 export function App() {
@@ -116,6 +132,7 @@ export function App() {
   const [codexLogByCard, setCodexLogByCard] = useState<Record<string, string[]>>({});
   const [ceoRunLoading, setCeoRunLoading] = useState(false);
   const [ceoRunError, setCeoRunError] = useState<string | null>(null);
+  const [boardDetailCardId, setBoardDetailCardId] = useState<string | null>(null);
 
   const orgOptions = bootstrap?.org ?? [];
 
@@ -166,6 +183,16 @@ export function App() {
     }
     return bucket;
   }, [bootstrap]);
+
+  const sortedBoardColumns = useMemo(() => {
+    if (!bootstrap) return [];
+    return [...bootstrap.columns].sort((a, b) => a.order - b.order);
+  }, [bootstrap]);
+
+  const boardDetailCard = useMemo(() => {
+    if (!bootstrap || !boardDetailCardId) return null;
+    return bootstrap.cards.find((c) => c.id === boardDetailCardId) ?? null;
+  }, [bootstrap, boardDetailCardId]);
 
   const inboxUnreadCount = useMemo(() => {
     if (!bootstrap) return 0;
@@ -333,6 +360,31 @@ export function App() {
     await load(bootstrap.company.id);
   }
 
+  async function addCardToColumn(columnStatus: BoardCard["status"]) {
+    if (!bootstrap) return;
+    const res = await fetch(`${API}/cards`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        companyId: bootstrap.company.id,
+        title: "Untitled card",
+        description: "",
+        assigneeOrgNodeId: null,
+        goalId: bootstrap.goal?.id ?? null
+      })
+    });
+    const created = (await res.json()) as BoardCard;
+    if (columnStatus !== "backlog") {
+      await fetch(`${API}/cards/${created.id}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: columnStatus })
+      });
+    }
+    await load(bootstrap.company.id);
+    setBoardDetailCardId(created.id);
+  }
+
   async function setCardStatus(cardId: string, status: BoardCard["status"]) {
     await fetch(`${API}/cards/${cardId}/status`, {
       method: "PATCH",
@@ -388,6 +440,7 @@ export function App() {
     const logResponse = await fetch(`${API}/cards/${cardId}/run-log`);
     const logData = await logResponse.json();
     setCodexLogByCard((prev) => ({ ...prev, [cardId]: logData.log }));
+    if (bootstrap) await load(bootstrap.company.id);
   }
 
   function markAllRead() {
@@ -403,12 +456,12 @@ export function App() {
   }, []);
 
   const dashStats = useMemo(() => {
-    if (!bootstrap) return { total: 0, blocked: 0, doing: 0, team: 0 };
+    if (!bootstrap) return { total: 0, inReview: 0, inProgress: 0, team: 0 };
     const cards = bootstrap.cards;
     return {
       total: cards.length,
-      blocked: cards.filter((c) => c.status === "blocked").length,
-      doing: cards.filter((c) => c.status === "doing").length,
+      inReview: cards.filter((c) => c.status === "in_review").length,
+      inProgress: cards.filter((c) => c.status === "in_progress").length,
       team: bootstrap.org.length
     };
   }, [bootstrap]);
@@ -616,11 +669,11 @@ export function App() {
                 </div>
                 <div className="statCard">
                   <h3>In progress</h3>
-                  <div className="num">{dashStats.doing}</div>
+                  <div className="num">{dashStats.inProgress}</div>
                 </div>
                 <div className="statCard">
-                  <h3>Blocked</h3>
-                  <div className="num">{dashStats.blocked}</div>
+                  <h3>In review</h3>
+                  <div className="num">{dashStats.inReview}</div>
                 </div>
                 <div className="statCard">
                   <h3>Team</h3>
@@ -671,9 +724,9 @@ export function App() {
                 <div className="channelHeader">
                   <h2>{threadNavTitle(activeChannelId)}</h2>
                   {ceoDmThreadId && activeChannelId === ceoDmThreadId && ceoKickoffCard ? (
-                    ceoKickoffCard.status === "blocked" ? (
+                    ceoKickoffCard.status === "in_review" ? (
                       <p className="calloutWarn channelHeaderNote">
-                        Kickoff is blocked: reply in this DM or #general, then move the kickoff card to Doing on the Board.
+                        Kickoff is in review: reply in this DM or #general, then move the card to In progress on the Board.
                       </p>
                     ) : (
                       <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runCeoKickoff()}>
@@ -842,7 +895,7 @@ export function App() {
             <div className="mainBody orgWrap">
               <section className="orgRoster" aria-label="Team roster">
                 <h2 className="orgRosterTitle">People</h2>
-                <p className="muted small orgRosterHint">Status reflects assigned board cards: blocked → blocked, doing → working, otherwise idle.</p>
+                <p className="muted small orgRosterHint">Status reflects assigned board cards: In review → blocked, In progress → working, otherwise idle.</p>
                 <table className="orgRosterTable">
                   <thead>
                     <tr>
@@ -991,11 +1044,12 @@ export function App() {
         {nav === "board" && (
           <>
             <header className="mainHeader">
-              <h1>BOARD</h1>
+              <h1>Board</h1>
             </header>
-            <div className="mainBody">
-              <div className="boardToolbar">
-                <input placeholder="Card title" value={newCard.title} onChange={(e) => setNewCard((s) => ({ ...s, title: e.target.value }))} />
+            <div className="mainBody trelloWrap">
+              <div className="trelloComposerBar">
+                <span className="muted trelloComposerHint">Add to Backlog</span>
+                <input placeholder="Title" value={newCard.title} onChange={(e) => setNewCard((s) => ({ ...s, title: e.target.value }))} />
                 <input placeholder="Description" value={newCard.description} onChange={(e) => setNewCard((s) => ({ ...s, description: e.target.value }))} />
                 <select value={newCard.assigneeOrgNodeId} onChange={(e) => setNewCard((s) => ({ ...s, assigneeOrgNodeId: e.target.value }))}>
                   <option value="">Unassigned</option>
@@ -1005,40 +1059,123 @@ export function App() {
                     </option>
                   ))}
                 </select>
-                <button type="button" className="btnOutline" onClick={addCard}>
-                  Add card
+                <button type="button" className="btnPrimary" onClick={() => void addCard()}>
+                  Add to backlog
                 </button>
               </div>
-              <div className="kanban">
-                {bootstrap.columns.map((column) => (
-                  <div className="column" key={column.id}>
-                    <h3>{column.title}</h3>
-                    {(groupedCards[column.status] ?? []).map((card) => (
-                      <div className="kanCard" key={card.id}>
-                        <h4>{card.title}</h4>
-                        <div className="desc">{card.description}</div>
-                        <div className="statusBtns">
-                          {(["todo", "doing", "blocked", "done"] as const).map((status) => (
-                            <button key={status} type="button" onClick={() => setCardStatus(card.id, status)}>
-                              {status}
-                            </button>
-                          ))}
-                        </div>
-                        <textarea
-                          placeholder="Codex prompt"
-                          value={codexPromptByCard[card.id] ?? ""}
-                          onChange={(e) => setCodexPromptByCard((prev) => ({ ...prev, [card.id]: e.target.value }))}
-                        />
-                        <button type="button" className="btnOutline" onClick={() => runCodex(card.id)}>
-                          Run Codex
-                        </button>
-                        {codexLogByCard[card.id] ? <pre>{(codexLogByCard[card.id] ?? []).join("\n")}</pre> : null}
-                      </div>
-                    ))}
-                  </div>
+              <div className="trelloBoard">
+                {sortedBoardColumns.map((column) => (
+                  <section key={column.id} className="trelloLane" aria-label={column.title}>
+                    <header className="trelloLaneHead">
+                      <h3>{column.title}</h3>
+                      <span className="trelloLaneBadge">{(groupedCards[column.status] ?? []).length}</span>
+                    </header>
+                    <div className="trelloLaneBody">
+                      {(groupedCards[column.status] ?? []).map((card) => {
+                        const assignee = card.assigneeOrgNodeId ? bootstrap.org.find((o) => o.id === card.assigneeOrgNodeId) : null;
+                        return (
+                          <article
+                            key={card.id}
+                            className="trelloCard"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setBoardDetailCardId(card.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setBoardDetailCardId(card.id);
+                              }
+                            }}
+                          >
+                            <div className="trelloCardTitle">{card.title}</div>
+                            <div className="trelloCardSnippet">{cardDescSnippet(card.description)}</div>
+                            <div className="trelloCardMeta">
+                              {assignee ? (
+                                <>
+                                  <span className="assigneeBubble" aria-hidden>
+                                    {(assignee.handle[0] ?? "?").toUpperCase()}
+                                  </span>
+                                  <span className="assigneeLabel">@{assignee.handle}</span>
+                                </>
+                              ) : (
+                                <span className="muted trelloUnassigned">Unassigned</span>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                    <button type="button" className="trelloLaneAdd" onClick={() => void addCardToColumn(column.status)}>
+                      + Add card
+                    </button>
+                  </section>
                 ))}
               </div>
             </div>
+            {boardDetailCard ? (
+              <div className="cardModalOverlay" role="presentation" onClick={() => setBoardDetailCardId(null)}>
+                <div
+                  className="cardModal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="card-modal-title"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button type="button" className="cardModalClose" aria-label="Close" onClick={() => setBoardDetailCardId(null)}>
+                    ×
+                  </button>
+                  <h2 id="card-modal-title">{boardDetailCard.title}</h2>
+                  <div className="cardModalSection">
+                    <div className="muted cardModalK">Description</div>
+                    <div className="cardModalDesc">{boardDetailCard.description.trim() || "—"}</div>
+                  </div>
+                  <div className="cardModalSection">
+                    <div className="muted cardModalK">Assignee</div>
+                    <div>
+                      {boardDetailCard.assigneeOrgNodeId
+                        ? (() => {
+                            const a = bootstrap.org.find((o) => o.id === boardDetailCard.assigneeOrgNodeId);
+                            return a ? `@${a.handle} (${a.name})` : "—";
+                          })()
+                        : "Unassigned"}
+                    </div>
+                  </div>
+                  <div className="cardModalSection">
+                    <label className="muted cardModalK" htmlFor="card-status">
+                      Status
+                    </label>
+                    <select
+                      id="card-status"
+                      value={boardDetailCard.status}
+                      onChange={(e) => void setCardStatus(boardDetailCard.id, e.target.value as BoardCard["status"])}
+                    >
+                      {(["backlog", "in_progress", "in_review", "closed"] as const).map((s) => (
+                        <option key={s} value={s}>
+                          {boardStatusLabel(s)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="cardModalSection">
+                    <label className="muted cardModalK" htmlFor="codex-prompt">
+                      Codex prompt
+                    </label>
+                    <textarea
+                      id="codex-prompt"
+                      className="cardModalCodex"
+                      value={codexPromptByCard[boardDetailCard.id] ?? ""}
+                      onChange={(e) => setCodexPromptByCard((prev) => ({ ...prev, [boardDetailCard.id]: e.target.value }))}
+                    />
+                    <button type="button" className="btnOutline" onClick={() => void runCodex(boardDetailCard.id)}>
+                      Run Codex
+                    </button>
+                    {codexLogByCard[boardDetailCard.id] ? (
+                      <pre className="cardModalLog">{(codexLogByCard[boardDetailCard.id] ?? []).slice(-48).join("\n")}</pre>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         )}
       </div>

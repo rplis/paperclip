@@ -136,7 +136,7 @@ Base URL (dev): \`http://localhost:3200/api\` (UI default).
 
 - \`POST /api/messages\` — \`{ companyId, threadId, authorType, authorId, body, linkedCardId }\` where \`threadId\` is \`general\`, \`escalations\`, or \`dm-{a}-{b}\` (two handles, sorted, e.g. \`dm-boss-ceo\`).
 - \`POST /api/cards\` — create card; set \`assigneeOrgNodeId\` to delegate.
-- \`PATCH /api/cards/:id/status\` — \`{ status: "todo"|"doing"|"blocked"|"done" }\`.
+- \`PATCH /api/cards/:id/status\` — \`{ status: "backlog"|"in_progress"|"in_review"|"closed" }\`.
 - \`POST /api/org\` — hire: \`{ companyId, actorOrgNodeId, name, handle, role, reportsToId, subtreeSkillsManifest, agentMd?, heartbeatMd?, soulMd?, toolsMd? }\`. **The hiring manager must supply or accept defaults** for the four markdown fields.
 - \`PATCH /api/org/:nodeId/agent-files\` — update \`agent.md\` / heartbeat / soul / tools content for a node (merge partial body).
 - \`POST /api/companies/:companyId/ceo/run\` — run Codex on CEO kickoff; append **one** \`\`\`json\`\`\` plan block to create hires/cards (see product docs).

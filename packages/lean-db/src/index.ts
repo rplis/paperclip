@@ -107,7 +107,7 @@ export class LeanStore {
       assigneeOrgNodeId: ceo.id,
       goalId: goal.id
     });
-    this.updateCardStatus(kickoff.id, "doing");
+    this.updateCardStatus(kickoff.id, "in_progress");
 
     this.createMessage({
       companyId: company.id,
@@ -121,7 +121,7 @@ export class LeanStore {
     const ceoDm = dmThreadId(ceo.handle, company.operatorHandle);
     const goalNeedsClarification = goal.description.trim().length < 40;
     if (goalNeedsClarification) {
-      this.updateCardStatus(kickoff.id, "blocked");
+      this.updateCardStatus(kickoff.id, "in_review");
       this.createMessage({
         companyId: company.id,
         threadId: ceoDm,
@@ -146,10 +146,10 @@ export class LeanStore {
 
   private seedBoard(companyId: string) {
     const defs: Array<{ title: string; status: CardStatus }> = [
-      { title: "To Do", status: "todo" },
-      { title: "Doing", status: "doing" },
-      { title: "Blocked", status: "blocked" },
-      { title: "Done", status: "done" }
+      { title: "Backlog", status: "backlog" },
+      { title: "In progress", status: "in_progress" },
+      { title: "In review", status: "in_review" },
+      { title: "Closed", status: "closed" }
     ];
     defs.forEach((d, index) => {
       const col: BoardColumn = {
@@ -219,7 +219,7 @@ export class LeanStore {
   }
 
   createCard(input: Omit<BoardCard, "id" | "status">) {
-    const card: BoardCard = { id: uid(), ...input, status: "todo" };
+    const card: BoardCard = { id: uid(), ...input, status: "backlog" };
     this.cards.set(card.id, card);
     return card;
   }

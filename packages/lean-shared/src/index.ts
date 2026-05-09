@@ -3,7 +3,13 @@ import { z } from "zod";
 export type Id = string;
 
 export type Role = "ceo" | "cto" | "engineer" | "operator" | "custom";
-export type CardStatus = "todo" | "doing" | "blocked" | "done";
+
+export const CARD_STATUS_VALUES = ["backlog", "in_progress", "in_review", "closed"] as const;
+export type CardStatus = (typeof CARD_STATUS_VALUES)[number];
+
+export const updateCardStatusSchema = z.object({
+  status: z.enum(CARD_STATUS_VALUES)
+});
 
 /** Per-agent markdown: same roles as agent.md, HEARTBEAT.md, SOUL.md, TOOLS.md on disk. */
 export interface AgentMarkdownPack {
