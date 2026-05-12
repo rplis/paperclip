@@ -554,6 +554,15 @@ export class LeanStore {
     return next;
   }
 
+  markAgentDueNow(orgNodeId: string) {
+    const node = this.orgNodes.get(orgNodeId);
+    if (!node) return null;
+    const next: OrgNode = { ...node, lastHeartbeatAt: null };
+    this.orgNodes.set(orgNodeId, next);
+    this.persist();
+    return next;
+  }
+
   createMessage(input: Omit<ChannelMessage, "id" | "createdAt" | "mentions">) {
     const message: ChannelMessage = {
       id: uid(),
@@ -676,6 +685,7 @@ export class LeanStore {
 
   createActionCardFromMessage(message: ChannelMessage): BoardCard | null {
     if (message.authorType === "system") return null;
+    if (message.linkedCardId) return null;
     const company = this.companies.get(message.companyId);
     if (!company) return null;
     const assistant = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "assistant");

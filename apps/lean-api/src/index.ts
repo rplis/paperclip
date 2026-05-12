@@ -49,6 +49,7 @@ function buildAgentTaskPrompt(input: {
   role: string;
   cardTitle: string;
   cardDescription: string;
+  cardConversation: string;
   agentMd: string;
   heartbeatMd: string;
   soulMd: string;
@@ -63,6 +64,9 @@ Current assigned card:
 Title: ${input.cardTitle}
 Description:
 ${input.cardDescription || "(no description)"}
+
+Task conversation:
+${input.cardConversation || "(no linked task conversation yet)"}
 
 Your agent.md:
 ${input.agentMd}
@@ -129,11 +133,77 @@ function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | n
 }
 
 function inferBossDependency(cardTitle: string, cardDescription: string, parsed: AssistantTaskResult | null) {
-  if (parsed?.status === "boss" || parsed?.bossAsk) return true;
+  if (parsed) return parsed.status === "boss" || Boolean(parsed.bossAsk);
   const taskText = `${cardTitle}\n${cardDescription}`;
   return /@boss|ask boss|boss to|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
     taskText
   );
+}
+
+function cleanCodexLog(logLines: string[]) {
+  const cleaned: string[] = [];
+  for (const entry of logLines) {
+    if (entry.startsWith("[stderr]")) continue;
+    for (const line of entry.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("$ ")) continue;
+      if (trimmed.startsWith("[stdin]")) continue;
+      if (trimmed.startsWith("[stderr]")) continue;
+      if (trimmed.startsWith("process_exit=")) continue;
+      if (trimmed === "tokens used") continue;
+      if (/^\d+(\.\d+)?$/.test(trimmed)) continue;
+      cleaned.push(line);
+    }
+  }
+  return cleaned.join("\n").trim();
+}
+
+function extractCodexError(logLines: string[]) {
+  const stderr = logLines
+    .filter((entry) => entry.startsWith("[stderr]"))
+    .join("\n")
+    .replace(/\[stderr\]\s*/g, "")
+    .trim();
+  const usageLimit = stderr.match(/You've hit your usage limit[\s\S]*?(?:try again at [^\n.]+|$)/i);
+  if (usageLimit?.[0]) return usageLimit[0].trim();
+  const explicitError = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("ERROR:"))
+    .at(-1);
+  return explicitError || "Codex run failed. Check the run log for details.";
+}
+
+function buildCardConversation(cardId: string, companyId: string) {
+  return [...store.messages.values()]
+    .filter((message) => message.companyId === companyId && message.linkedCardId === cardId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-10)
+    .map((message) => {
+      const author =
+        message.authorType === "system"
+          ? "system"
+          : message.authorType === "user"
+            ? "boss"
+            : store.orgNodes.get(message.authorId ?? "")?.handle ?? "assistant";
+      const body = message.body.includes("--------\nmodel:")
+        ? message.body.split("--------\nmodel:")[0]?.trim() || "Previous assistant run log omitted."
+        : message.body;
+      const compact = body.length > 900 ? `${body.slice(0, 900)}...` : body;
+      return `[${new Date(message.createdAt).toISOString()}] @${author}: ${compact}`;
+    })
+    .join("\n\n");
+}
+
+function latestBossCommentMs(cardId: string, companyId: string) {
+  let latest = 0;
+  for (const message of store.messages.values()) {
+    if (message.companyId !== companyId || message.linkedCardId !== cardId || message.authorType !== "user") continue;
+    const ms = Date.parse(message.createdAt);
+    if (Number.isFinite(ms) && ms > latest) latest = ms;
+  }
+  return latest;
 }
 
 async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCodexResult> {
@@ -286,7 +356,10 @@ async function executeAgentActiveCard(agentId: string) {
 
   const activeCard = [...store.cards.values()]
     .filter((card) => card.companyId === agent.companyId && card.assigneeOrgNodeId === agent.id && card.status === "in_progress")
-    .sort((a, b) => a.title.localeCompare(b.title))[0];
+    .sort((a, b) => {
+      const byBossComment = latestBossCommentMs(b.id, agent.companyId) - latestBossCommentMs(a.id, agent.companyId);
+      return byBossComment !== 0 ? byBossComment : a.title.localeCompare(b.title);
+    })[0];
 
   if (!activeCard) {
     store.createMessage({
@@ -309,30 +382,16 @@ async function executeAgentActiveCard(agentId: string) {
       agentName: agent.name,
       agentHandle: agent.handle,
       role: agent.role,
-      cardTitle: activeCard.title,
-      cardDescription: activeCard.description,
-      agentMd: agent.files.agentMd,
+        cardTitle: activeCard.title,
+        cardDescription: activeCard.description,
+        cardConversation: buildCardConversation(activeCard.id, agent.companyId),
+        agentMd: agent.files.agentMd,
       heartbeatMd: agent.files.heartbeatMd,
       soulMd: agent.files.soulMd,
       toolsMd: agent.files.toolsMd
     })
   });
-  const raw = result.log.join("\n");
-  const withoutNoise = raw
-    .replace(/```json[\s\S]*?```/gi, "[json omitted]")
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      if (trimmed.startsWith("$ ")) return false;
-      if (trimmed.startsWith("[stdin]")) return false;
-      if (trimmed.startsWith("[stderr]")) return false;
-      if (trimmed === "tokens used") return false;
-      if (/^\d+(\.\d+)?$/.test(trimmed)) return false;
-      return true;
-    })
-    .join("\n")
-    .trim();
+  const withoutNoise = cleanCodexLog(result.log).replace(/```json[\s\S]*?```/gi, "[json omitted]").trim();
   const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
   const taskResult = result.exitCode === 0 ? extractAssistantTaskResult(result.log) : null;
   const summary = taskResult?.summary || preview || "Heartbeat completed the assigned task.";
@@ -351,6 +410,13 @@ async function executeAgentActiveCard(agentId: string) {
         linkedCardId: activeCard.id
       });
     }
+  } else {
+    const errorSummary = extractCodexError(result.log);
+    store.updateCardStatus(
+      activeCard.id,
+      "boss",
+      `Assistant runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
+    );
   }
   store.createMessage({
     companyId: agent.companyId,
@@ -362,7 +428,7 @@ async function executeAgentActiveCard(agentId: string) {
         ? needsBoss
           ? `Moved "${activeCard.title}" to Boss.\n\n${summary}`
           : `Completed "${activeCard.title}" and moved it to Review.\n\n${summary}`
-        : `Heartbeat work pass failed on "${activeCard.title}" with exit ${result.exitCode}.\n\n${preview || "(no output)"}`,
+        : `Moved "${activeCard.title}" to Boss because the assistant runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
     linkedCardId: activeCard.id
   });
 
@@ -539,6 +605,9 @@ app.patch("/api/cards/:cardId/status", (req, res) => {
       return res.status(400).json({ error: "Closing a task requires a completion summary." });
     }
     const card = store.updateCardStatus(req.params.cardId, parsed.data.status, parsed.data.completionSummary);
+    if (parsed.data.status === "in_progress" && existing.status === "boss" && card.assigneeOrgNodeId) {
+      store.markAgentDueNow(card.assigneeOrgNodeId);
+    }
     if (parsed.data.status === "closed" && existing.status !== "closed" && parsed.data.completionSummary?.trim()) {
       const company = store.companies.get(card.companyId);
       const assignee = card.assigneeOrgNodeId ? store.orgNodes.get(card.assigneeOrgNodeId) : null;
