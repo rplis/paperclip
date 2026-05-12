@@ -206,6 +206,16 @@ function latestBossCommentMs(cardId: string, companyId: string) {
   return latest;
 }
 
+function findRuntimeBlockedBossCard(companyId: string, assistantId: string) {
+  return [...store.cards.values()].find(
+    (card) =>
+      card.companyId === companyId &&
+      card.assigneeOrgNodeId === assistantId &&
+      card.status === "boss" &&
+      card.completionSummary?.startsWith("Assistant runtime needs attention:")
+  );
+}
+
 async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCodexResult> {
   const company = store.companies.get(companyId);
   if (!company) return { ok: false, httpStatus: 404, error: "Project not found" };
@@ -447,6 +457,19 @@ async function runAssistantHeartbeat(companyId: string, options: { force: boolea
 
   activeAssistantHeartbeats.add(assistant.id);
   try {
+    const hasActiveCard = [...store.cards.values()].some(
+      (card) => card.companyId === companyId && card.assigneeOrgNodeId === assistant.id && card.status === "in_progress"
+    );
+    const runtimeBlockedCard = findRuntimeBlockedBossCard(companyId, assistant.id);
+    if (!hasActiveCard && runtimeBlockedCard) {
+      return {
+        ok: true as const,
+        heartbeat: null,
+        engine: null,
+        message: `Assistant runtime is waiting on Boss card "${runtimeBlockedCard.title}". Move it back to In progress when the runtime is available.`
+      };
+    }
+
     const heartbeat = store.runHeartbeatForAgent(assistant.id, 1, { force: options.force });
     const kickoff = findPlanningCard(companyId, assistant.id);
 

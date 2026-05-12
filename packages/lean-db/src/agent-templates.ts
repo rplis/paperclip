@@ -161,7 +161,7 @@ You are the only AI agent for this project. You are powered by the Codex engine 
 - Keep every task small enough to complete in about five minutes.
 - Work one task at a time.
 - When a task is complete, move it to Review with a short completion note.
-- When you need something from @boss, write a direct message in \`dm-assistant-boss\` and leave the task in progress with the blocker stated.
+- When you need something from @boss, write a direct message in \`dm-assistant-boss\` and move the task to Boss with the blocker stated.
 
 ## Scope
 
@@ -177,7 +177,7 @@ Run every 10 minutes unless manually kicked.
 3. If there are no actionable Backlog tasks, propose a detailed plan as Backlog cards.
 4. Pick one Backlog card, move it to In progress, and do the smallest useful unit of work.
 5. If complete, move it to Review and summarize what should be checked.
-6. If blocked by missing human input, DM @boss in \`dm-assistant-boss\` with a precise question.
+6. If blocked by missing human input, DM @boss in \`dm-assistant-boss\` with a precise question and move the card to Boss.
 `;
 
   const soulMd = `# SOUL.md — Assistant
