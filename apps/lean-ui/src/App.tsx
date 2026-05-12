@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   dmThreadId,
   type BoardCard,
   type BoardColumn,
   type ChannelMessage,
   type Company,
+  type CompanySettings,
+  type DailyReport,
   type Escalation,
   type Goal,
+  type HeartbeatRun,
   type OrgNode
 } from "@lean/shared";
 
 const API = "http://localhost:3200/api";
 const OPERATOR_HANDLE = "boss";
 
-type NavId = "dashboard" | "channels" | "inbox" | "board" | "org" | "goals";
+type NavId = "dashboard" | "channels" | "inbox" | "board" | "goals" | "settings";
 type InboxTab = "mine" | "recent" | "unread" | "all";
 type AgentFileTab = "agentMd" | "heartbeatMd" | "soulMd" | "toolsMd";
 
@@ -25,6 +28,21 @@ interface Bootstrap {
   cards: BoardCard[];
   messages: ChannelMessage[];
   escalations: Escalation[];
+  settings: CompanySettings;
+  heartbeatRuns: HeartbeatRun[];
+  dailyReports: DailyReport[];
+}
+
+interface CompanySummary extends Company {
+  stats: {
+    orgNodes: number;
+    cards: number;
+    backlog: number;
+    inProgress: number;
+    inReview: number;
+    closed: number;
+    heartbeatRuns: number;
+  };
 }
 
 interface InboxItem {
@@ -45,14 +63,6 @@ function Icon({ children }: { children: React.ReactNode }) {
   );
 }
 
-function buildOrgRoots(nodes: OrgNode[]): OrgNode[] {
-  return nodes.filter((n) => n.reportsToId === null);
-}
-
-function orgChildren(nodes: OrgNode[], parentId: string): OrgNode[] {
-  return nodes.filter((n) => n.reportsToId === parentId);
-}
-
 function threadSidebarLabel(threadId: string): string {
   if (threadId === "general") return "general";
   if (threadId === "escalations") return "escalations";
@@ -67,13 +77,37 @@ function threadNavTitle(threadId: string): string {
   return threadSidebarLabel(threadId);
 }
 
-type WorkStatus = "idle" | "working" | "blocked";
+type WorkStatus = "idle" | "queued" | "working";
 
-function workStatusForNode(nodeId: string, cards: BoardCard[]): WorkStatus {
+interface EmployeeWorkState {
+  status: WorkStatus;
+  statusLabel: string;
+  currentTask: BoardCard | null;
+  backlogCount: number;
+}
+
+function workStateForNode(nodeId: string, cards: BoardCard[]): EmployeeWorkState {
   const mine = cards.filter((c) => c.assigneeOrgNodeId === nodeId);
-  if (mine.some((c) => c.status === "in_review")) return "blocked";
-  if (mine.some((c) => c.status === "in_progress")) return "working";
-  return "idle";
+  const inProgress = mine.filter((c) => c.status === "in_progress").sort((a, b) => a.title.localeCompare(b.title));
+  const backlog = mine.filter((c) => c.status === "backlog").sort((a, b) => a.title.localeCompare(b.title));
+
+  if (inProgress[0]) {
+    return {
+      status: "working",
+      statusLabel: "Working",
+      currentTask: inProgress[0],
+      backlogCount: backlog.length
+    };
+  }
+  if (backlog[0]) {
+    return {
+      status: "queued",
+      statusLabel: "Queued",
+      currentTask: backlog[0],
+      backlogCount: backlog.length
+    };
+  }
+  return { status: "idle", statusLabel: "Idle", currentTask: null, backlogCount: 0 };
 }
 
 function cardDescSnippet(text: string, maxLen = 140): string {
@@ -86,15 +120,25 @@ function boardStatusLabel(s: BoardCard["status"]): string {
   const labels: Record<BoardCard["status"], string> = {
     backlog: "Backlog",
     in_progress: "In progress",
-    in_review: "In review",
+    in_review: "Review",
     closed: "Closed"
   };
   return labels[s];
 }
 
+function isStaleReviewNotice(message: ChannelMessage): boolean {
+  return (
+    (message.body.includes("Review requested for") || message.body.includes("were waiting for review"))
+  );
+}
+
 export function App() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [companyId, setCompanyId] = useState("");
+  const [companyList, setCompanyList] = useState<CompanySummary[]>([]);
+  const [companyListLoading, setCompanyListLoading] = useState(true);
+  const [companyListError, setCompanyListError] = useState<string | null>(null);
+  const companyListRequestId = useRef(0);
   const [nav, setNav] = useState<NavId>("channels");
   const [activeChannelId, setActiveChannelId] = useState("general");
   const [inboxTab, setInboxTab] = useState<InboxTab>("mine");
@@ -106,7 +150,7 @@ export function App() {
     goalDescription: ""
   });
   const [newNode, setNewNode] = useState({
-    hiringManagerId: "",
+    reportingManagerId: "",
     name: "",
     handle: "",
     role: "custom",
@@ -127,15 +171,27 @@ export function App() {
   const [agentFilesSaving, setAgentFilesSaving] = useState(false);
   const [newCard, setNewCard] = useState({ title: "", description: "", assigneeOrgNodeId: "" });
   const [newMessage, setNewMessage] = useState({ body: "" });
+  const [messageSending, setMessageSending] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
   const [newEscalation, setNewEscalation] = useState({ fromOrgNodeId: "", cardId: "", question: "", context: "" });
-  const [codexPromptByCard, setCodexPromptByCard] = useState<Record<string, string>>({});
-  const [codexLogByCard, setCodexLogByCard] = useState<Record<string, string[]>>({});
   const [ceoRunLoading, setCeoRunLoading] = useState(false);
   const [ceoRunError, setCeoRunError] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [heartbeatLoading, setHeartbeatLoading] = useState(false);
+  const [agentHeartbeatLoadingId, setAgentHeartbeatLoadingId] = useState<string | null>(null);
   const [boardDetailCardId, setBoardDetailCardId] = useState<string | null>(null);
+  const [closingCardId, setClosingCardId] = useState<string | null>(null);
+  const [completionSummary, setCompletionSummary] = useState("");
+  const [completionSummaryError, setCompletionSummaryError] = useState<string | null>(null);
   const [lastWorkspaceSyncAt, setLastWorkspaceSyncAt] = useState<number | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState({
+    heartbeatIntervalMinutes: "10",
+    dailyReportTime: "09:00",
+    skillsmpEnabled: false
+  });
 
   const orgOptions = bootstrap?.org ?? [];
+  const hiringManagerNode = orgOptions.find((node) => node.role === "hiring_manager" || node.handle === "hiring") ?? null;
 
   const selectedOrgNode = useMemo(
     () => orgOptions.find((n) => n.id === selectedOrgNodeId) ?? null,
@@ -147,6 +203,22 @@ export function App() {
     setAgentFileDraft({ ...selectedOrgNode.files });
   }, [selectedOrgNode?.id, selectedOrgNode?.files.agentMd, selectedOrgNode?.files.heartbeatMd, selectedOrgNode?.files.soulMd, selectedOrgNode?.files.toolsMd]);
 
+  useEffect(() => {
+    if (!bootstrap?.settings) return;
+    setSettingsDraft({
+      heartbeatIntervalMinutes: String(bootstrap.settings.heartbeatIntervalMinutes),
+      dailyReportTime: bootstrap.settings.dailyReportTime,
+      skillsmpEnabled: bootstrap.settings.skillsmpEnabled
+    });
+  }, [bootstrap?.settings.heartbeatIntervalMinutes, bootstrap?.settings.dailyReportTime, bootstrap?.settings.skillsmpEnabled]);
+
+  useEffect(() => {
+    if (boardDetailCardId) return;
+    setClosingCardId(null);
+    setCompletionSummary("");
+    setCompletionSummaryError(null);
+  }, [boardDetailCardId]);
+
   const channelIds = useMemo(() => {
     if (!bootstrap) return ["general", "escalations"] as string[];
     const op = bootstrap.company.operatorHandle;
@@ -156,11 +228,11 @@ export function App() {
     return ["general", "escalations", ...dms];
   }, [bootstrap]);
 
-  const ceoDmThreadId = useMemo(() => {
+  const assistantDmThreadId = useMemo(() => {
     if (!bootstrap) return null;
-    const ceo = bootstrap.org.find((n) => n.handle === "ceo");
-    if (!ceo) return null;
-    return dmThreadId(bootstrap.company.operatorHandle, ceo.handle);
+    const assistant = bootstrap.org.find((n) => n.handle === "assistant");
+    if (!assistant) return null;
+    return dmThreadId(bootstrap.company.operatorHandle, assistant.handle);
   }, [bootstrap]);
 
   useEffect(() => {
@@ -199,6 +271,7 @@ export function App() {
     if (!bootstrap) return 0;
     let n = 0;
     for (const m of bootstrap.messages) {
+      if (isStaleReviewNotice(m)) continue;
       if (m.mentions.includes(OPERATOR_HANDLE) && !readIds.has(`m:${m.id}`)) n += 1;
     }
     for (const e of bootstrap.escalations) {
@@ -226,6 +299,7 @@ export function App() {
     }
 
     for (const m of bootstrap.messages) {
+      if (isStaleReviewNotice(m) && inboxTab !== "all") continue;
       const mentioned = m.mentions.includes(OPERATOR_HANDLE);
       const author =
         m.authorType === "system"
@@ -270,6 +344,30 @@ export function App() {
     setLastWorkspaceSyncAt(Date.now());
   }, []);
 
+  const loadCompanyList = useCallback(async () => {
+    const requestId = companyListRequestId.current + 1;
+    companyListRequestId.current = requestId;
+    setCompanyListLoading(true);
+    setCompanyListError(null);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(`${API}/companies`, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Company list failed with ${response.status}`);
+      const data = (await response.json()) as { companies: CompanySummary[] };
+      if (companyListRequestId.current !== requestId) return;
+      setCompanyList(data.companies);
+      setCompanyListError(null);
+    } catch (error) {
+      if (companyListRequestId.current !== requestId) return;
+      setCompanyListError(error instanceof Error && error.name === "AbortError" ? "API did not respond. Restart the dev server." : error instanceof Error ? error.message : "Company list failed.");
+    } finally {
+      window.clearTimeout(timeout);
+      if (companyListRequestId.current !== requestId) return;
+      setCompanyListLoading(false);
+    }
+  }, []);
+
   async function createCompanyAndLoad() {
     if (!createCompany.name.trim() || !createCompany.goalDescription.trim()) return;
     const response = await fetch(`${API}/companies`, {
@@ -282,8 +380,10 @@ export function App() {
     });
     const data = (await response.json()) as { company: Company };
     const cid = data.company.id;
+    setCreateCompany({ name: "", goalDescription: "" });
+    await loadCompanyList();
     await load(cid);
-    setActiveChannelId(dmThreadId(data.company.operatorHandle, "ceo"));
+    setActiveChannelId(dmThreadId(data.company.operatorHandle, "assistant"));
     setNav("channels");
     let polls = 0;
     const poll = window.setInterval(() => {
@@ -294,18 +394,18 @@ export function App() {
   }
 
   async function addOrgNode() {
-    if (!bootstrap || !newNode.hiringManagerId) return;
+    if (!bootstrap || !hiringManagerNode || !newNode.reportingManagerId) return;
     const skills = newNode.subtreeSkillsManifest
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
     const body: Record<string, unknown> = {
       companyId: bootstrap.company.id,
-      actorOrgNodeId: newNode.hiringManagerId,
+      actorOrgNodeId: hiringManagerNode.id,
       name: newNode.name,
       handle: newNode.handle,
       role: newNode.role,
-      reportsToId: newNode.hiringManagerId,
+      reportsToId: newNode.reportingManagerId,
       subtreeSkillsManifest: skills
     };
     const am = newNode.agentMd.trim();
@@ -380,38 +480,69 @@ export function App() {
       await fetch(`${API}/cards/${created.id}/status`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: columnStatus })
+        body: JSON.stringify({
+          status: columnStatus,
+          completionSummary: columnStatus === "closed" ? "Created directly in Closed." : undefined
+        })
       });
     }
     await load(bootstrap.company.id);
     setBoardDetailCardId(created.id);
   }
 
-  async function setCardStatus(cardId: string, status: BoardCard["status"]) {
-    await fetch(`${API}/cards/${cardId}/status`, {
+  async function setCardStatus(cardId: string, status: BoardCard["status"], summary?: string) {
+    const response = await fetch(`${API}/cards/${cardId}/status`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status, completionSummary: summary })
     });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(data?.error ?? "Could not update card status");
+    }
     if (bootstrap) await load(bootstrap.company.id);
+  }
+
+  async function closeCardWithSummary(cardId: string) {
+    const summary = completionSummary.trim();
+    if (!summary) {
+      setCompletionSummaryError("Write a short summary before closing this task.");
+      return;
+    }
+    setCompletionSummaryError(null);
+    await setCardStatus(cardId, "closed", summary);
+    setClosingCardId(null);
+    setCompletionSummary("");
   }
 
   async function postChannelMessage() {
     if (!bootstrap || !newMessage.body.trim()) return;
-    await fetch(`${API}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        companyId: bootstrap.company.id,
-        threadId: activeChannelId,
-        authorType: "user",
-        authorId: null,
-        body: newMessage.body.trim(),
-        linkedCardId: null
-      })
-    });
-    setNewMessage({ body: "" });
-    await load(bootstrap.company.id);
+    setMessageSending(true);
+    setMessageError(null);
+    try {
+      const response = await fetch(`${API}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyId: bootstrap.company.id,
+          threadId: activeChannelId,
+          authorType: "user",
+          authorId: null,
+          body: newMessage.body.trim(),
+          linkedCardId: null
+        })
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? `Message failed with ${response.status}`);
+      }
+      setNewMessage({ body: "" });
+      await load(bootstrap.company.id);
+    } catch (error) {
+      setMessageError(error instanceof Error ? error.message : "Message failed to send.");
+    } finally {
+      setMessageSending(false);
+    }
   }
 
   async function createEscalation() {
@@ -431,18 +562,76 @@ export function App() {
     await load(bootstrap.company.id);
   }
 
-  async function runCodex(cardId: string) {
-    const prompt = codexPromptByCard[cardId]?.trim();
-    if (!prompt) return;
-    await fetch(`${API}/cards/${cardId}/run-codex`, {
-      method: "POST",
+  async function runHeartbeatNow() {
+    if (!bootstrap) return;
+    setHeartbeatLoading(true);
+    try {
+      await fetch(`${API}/companies/${bootstrap.company.id}/heartbeat`, { method: "POST" });
+      await load(bootstrap.company.id);
+    } finally {
+      setHeartbeatLoading(false);
+    }
+  }
+
+  async function kickAssistantHeartbeat() {
+    if (!bootstrap) return;
+    setCeoRunError(null);
+    setCeoRunLoading(true);
+    try {
+      const response = await fetch(`${API}/companies/${bootstrap.company.id}/assistant/heartbeat`, { method: "POST" });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? response.statusText);
+      await load(bootstrap.company.id);
+      setNav("dashboard");
+    } catch (err) {
+      setCeoRunError(err instanceof Error ? err.message : "Assistant heartbeat failed");
+    } finally {
+      setCeoRunLoading(false);
+    }
+  }
+
+  async function kickAgentHeartbeat(agent: OrgNode) {
+    if (!bootstrap) return;
+    if (agent.handle === "assistant") {
+      await kickAssistantHeartbeat();
+      return;
+    }
+    setAgentHeartbeatLoadingId(agent.id);
+    try {
+      const response = await fetch(`${API}/agents/${agent.id}/heartbeat`, { method: "POST" });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? response.statusText);
+      await load(bootstrap.company.id);
+    } finally {
+      setAgentHeartbeatLoadingId(null);
+    }
+  }
+
+  async function generateDailyReport() {
+    if (!bootstrap) return;
+    setReportLoading(true);
+    try {
+      await fetch(`${API}/companies/${bootstrap.company.id}/daily-report`, { method: "POST" });
+      await load(bootstrap.company.id);
+      setNav("dashboard");
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (!bootstrap) return;
+    const heartbeatIntervalMinutes = Number(settingsDraft.heartbeatIntervalMinutes);
+    await fetch(`${API}/companies/${bootstrap.company.id}/settings`, {
+      method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({
+        heartbeatIntervalMinutes,
+        dailyReportTime: settingsDraft.dailyReportTime,
+        skillsmpEnabled: settingsDraft.skillsmpEnabled
+      })
     });
-    const logResponse = await fetch(`${API}/cards/${cardId}/run-log`);
-    const logData = await logResponse.json();
-    setCodexLogByCard((prev) => ({ ...prev, [cardId]: logData.log }));
-    if (bootstrap) await load(bootstrap.company.id);
+    await load(bootstrap.company.id);
   }
 
   function markAllRead() {
@@ -454,8 +643,8 @@ export function App() {
   }
 
   useEffect(() => {
-    if (companyId) void load(companyId);
-  }, []);
+    void loadCompanyList();
+  }, [loadCompanyList]);
 
   const HEARTBEAT_POLL_MS = 60_000;
 
@@ -469,101 +658,124 @@ export function App() {
   }, [bootstrap?.company.id, load]);
 
   const dashStats = useMemo(() => {
-    if (!bootstrap) return { total: 0, inReview: 0, inProgress: 0, team: 0 };
+    if (!bootstrap) return { total: 0, backlog: 0, inProgress: 0, inReview: 0, closed: 0, team: 0 };
     const cards = bootstrap.cards;
     return {
       total: cards.length,
-      inReview: cards.filter((c) => c.status === "in_review").length,
+      backlog: cards.filter((c) => c.status === "backlog").length,
       inProgress: cards.filter((c) => c.status === "in_progress").length,
+      inReview: cards.filter((c) => c.status === "in_review").length,
+      closed: cards.filter((c) => c.status === "closed").length,
       team: bootstrap.org.length
     };
   }, [bootstrap]);
 
-  const ceoKickoffCard = useMemo(() => {
+  const latestDailyReport = bootstrap?.dailyReports[0] ?? null;
+  const latestHeartbeatRuns = bootstrap?.heartbeatRuns.slice(0, 8) ?? [];
+
+  const assistantKickoffCard = useMemo(() => {
     if (!bootstrap) return null;
-    const ceo = bootstrap.org.find((n) => n.handle === "ceo");
-    if (!ceo) return null;
+    const assistant = bootstrap.org.find((n) => n.handle === "assistant");
+    if (!assistant) return null;
     return (
       bootstrap.cards.find(
-        (c) => c.assigneeOrgNodeId === ceo.id && c.title.includes("Define company structure")
+        (c) => c.assigneeOrgNodeId === assistant.id && c.title.includes("Create the project plan")
       ) ?? null
     );
   }, [bootstrap]);
 
-  async function runCeoKickoff() {
+  async function runAssistantPlan() {
     if (!bootstrap) return;
     setCeoRunError(null);
     setCeoRunLoading(true);
     try {
-      const response = await fetch(`${API}/companies/${bootstrap.company.id}/ceo/run`, { method: "POST" });
+      const response = await fetch(`${API}/companies/${bootstrap.company.id}/assistant/run`, { method: "POST" });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error ?? response.statusText);
       await load(bootstrap.company.id);
     } catch (err) {
-      setCeoRunError(err instanceof Error ? err.message : "CEO run failed");
+      setCeoRunError(err instanceof Error ? err.message : "Assistant planning run failed");
     } finally {
       setCeoRunLoading(false);
     }
   }
 
-  function renderOrgTree(nodes: OrgNode[], parentId: string | null, depth: number): ReactNode {
-    const list = parentId === null ? buildOrgRoots(nodes) : orgChildren(nodes, parentId);
-    return (
-      <ul style={{ listStyle: "none", margin: 0, paddingLeft: depth ? 20 : 0 }}>
-        {list.map((node) => (
-          <li key={node.id} className={`orgNode${selectedOrgNodeId === node.id ? " orgNodeSelected" : ""}`} style={{ marginBottom: 8 }}>
-            <button type="button" className="orgNodePick" onClick={() => setSelectedOrgNodeId(node.id)}>
-              <span className="handle">@{node.handle}</span>{" "}
-              <span className="muted">
-                {node.name} · {node.role}
-              </span>
-            </button>
-            {node.subtreeSkillsManifest.length > 0 ? (
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                Skills: {node.subtreeSkillsManifest.join(", ")}
-              </div>
-            ) : null}
-            {renderOrgTree(nodes, node.id, depth + 1)}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
   if (!bootstrap) {
     return (
       <div className="onboard">
-        <div className="onboardCard">
-          <h1>New company</h1>
-          <p>Enter the company name and goal. After that you land in the workspace.</p>
-          <label htmlFor="co-name">Company name</label>
-          <input
-            id="co-name"
-            value={createCompany.name}
-            onChange={(e) => setCreateCompany((s) => ({ ...s, name: e.target.value }))}
-            placeholder=""
-          />
-          <label htmlFor="co-goal">Goal description</label>
-          <textarea
-            id="co-goal"
-            value={createCompany.goalDescription}
-            onChange={(e) => setCreateCompany((s) => ({ ...s, goalDescription: e.target.value }))}
-            placeholder=""
-          />
-          <button
-            type="button"
-            className="primary"
-            onClick={createCompanyAndLoad}
-            disabled={!createCompany.name.trim() || !createCompany.goalDescription.trim()}
-          >
-            Create company
-          </button>
+        <div className="companyChooser">
+          <section className="onboardCard companyListCard">
+            <div className="chooserHead">
+              <div>
+                <h1>Projects</h1>
+                <p>Select an existing project or create a new one.</p>
+              </div>
+              <button type="button" className="btnOutline" onClick={() => void loadCompanyList()}>
+                Refresh
+              </button>
+            </div>
+            {companyListLoading ? <p className="muted">Loading projects…</p> : null}
+            {companyListError && companyList.length === 0 ? <p className="calloutErr">{companyListError}</p> : null}
+            {!companyListLoading && companyList.length === 0 ? <p className="emptyState">No projects yet.</p> : null}
+            <div className="companyPickList">
+              {companyList.map((company) => (
+                <button
+                  key={company.id}
+                  type="button"
+                  className="companyPick"
+                  onClick={() => {
+                    void load(company.id);
+                    setNav("dashboard");
+                  }}
+                >
+                  <div>
+                    <strong>{company.name}</strong>
+                    <span className="muted"> assistant · {company.stats.cards} cards · {company.stats.heartbeatRuns} runs</span>
+                  </div>
+                  <div className="companyStats">
+                    <span>{company.stats.inProgress} in progress</span>
+                    <span>{company.stats.inReview} review</span>
+                    <span>{company.stats.backlog} backlog</span>
+                    <span>{company.stats.closed} closed</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="onboardCard">
+            <h1>New project</h1>
+            <p>Enter the project name and goal. The Assistant will turn it into small Backlog tasks.</p>
+            <label htmlFor="co-name">Project name</label>
+            <input
+              id="co-name"
+              value={createCompany.name}
+              onChange={(e) => setCreateCompany((s) => ({ ...s, name: e.target.value }))}
+              placeholder=""
+            />
+            <label htmlFor="co-goal">Goal description</label>
+            <textarea
+              id="co-goal"
+              value={createCompany.goalDescription}
+              onChange={(e) => setCreateCompany((s) => ({ ...s, goalDescription: e.target.value }))}
+              placeholder=""
+            />
+            <button
+              type="button"
+              className="primary"
+              onClick={createCompanyAndLoad}
+              disabled={!createCompany.name.trim() || !createCompany.goalDescription.trim()}
+            >
+              Create project
+            </button>
+          </section>
         </div>
       </div>
     );
   }
 
   const recentMessages = [...(bootstrap.messages ?? [])]
+    .filter((message) => !isStaleReviewNotice(message))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 12);
 
@@ -584,6 +796,26 @@ export function App() {
             </Icon>
           </button>
         </div>
+
+        <button
+          type="button"
+          className="navItem"
+          onClick={() => {
+            setBootstrap(null);
+            setCompanyId("");
+            void loadCompanyList();
+          }}
+        >
+          <Icon>
+            <path d="M8 6h13" />
+            <path d="M8 12h13" />
+            <path d="M8 18h13" />
+            <path d="M3 6h.01" />
+            <path d="M3 12h.01" />
+            <path d="M3 18h.01" />
+          </Icon>
+          Projects
+        </button>
 
         <button type="button" className="navItem" onClick={() => setNav("board")}>
           <Icon>
@@ -629,7 +861,7 @@ export function App() {
           Board
         </button>
 
-        <div className="navSection">Company</div>
+        <div className="navSection">Project</div>
         <button type="button" className={`navItem ${nav === "goals" ? "active" : ""}`} onClick={() => setNav("goals")}>
           <Icon>
             <circle cx="12" cy="12" r="10" />
@@ -638,17 +870,15 @@ export function App() {
           </Icon>
           Goals
         </button>
-        <button type="button" className={`navItem ${nav === "org" ? "active" : ""}`} onClick={() => setNav("org")}>
+        <button type="button" className={`navItem ${nav === "settings" ? "active" : ""}`} onClick={() => setNav("settings")}>
           <Icon>
-            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8.6 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 3.9l.06.06A1.65 1.65 0 0 0 8.6 4.6a1.65 1.65 0 0 0 1-.6 1.65 1.65 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 8.6a1.65 1.65 0 0 0 .6 1 1.65 1.65 0 0 0 1.1.4H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z" />
           </Icon>
-          Org
+          Settings
         </button>
 
-        <div className="navSection">People</div>
+        <div className="navSection">Assistant</div>
         <ul className="agentList">
           {bootstrap.org.map((node) => (
             <li key={node.id}>
@@ -674,7 +904,7 @@ export function App() {
             <header className="mainHeader">
               <h1>DASHBOARD</h1>
               <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
-                The API promotes assigned Backlog cards to In progress every minute (LEAN_HEARTBEAT_MS). Last refresh:{" "}
+                The Assistant wakes on the configured heartbeat interval; the dev scheduler checks when work is due. Last refresh:{" "}
                 {lastWorkspaceSyncAt ? new Date(lastWorkspaceSyncAt).toLocaleTimeString() : "—"}
               </p>
             </header>
@@ -689,12 +919,64 @@ export function App() {
                   <div className="num">{dashStats.inProgress}</div>
                 </div>
                 <div className="statCard">
-                  <h3>In review</h3>
+                  <h3>Backlog</h3>
+                  <div className="num">{dashStats.backlog}</div>
+                </div>
+                <div className="statCard">
+                  <h3>Review</h3>
                   <div className="num">{dashStats.inReview}</div>
                 </div>
                 <div className="statCard">
-                  <h3>Team</h3>
-                  <div className="num">{dashStats.team}</div>
+                  <h3>Heartbeat</h3>
+                  <div className="num">{bootstrap.settings.heartbeatIntervalMinutes}m</div>
+                </div>
+              </div>
+
+              <div className="panelBlock">
+                <div className="panelHead">
+                  <h2>Assistant report</h2>
+                  <button type="button" className="btnOutline" disabled={reportLoading} onClick={() => void generateDailyReport()}>
+                    {reportLoading ? "Generating…" : "Generate report"}
+                  </button>
+                </div>
+                {latestDailyReport ? (
+                  <>
+                    <p className="muted small">Created {new Date(latestDailyReport.createdAt).toLocaleString()}</p>
+                    <pre className="reportBody">{latestDailyReport.body}</pre>
+                  </>
+                ) : (
+                  <p className="muted">No Assistant report generated yet.</p>
+                )}
+              </div>
+
+              <div className="panelBlock">
+                <div className="panelHead">
+                  <h2>Heartbeat runs</h2>
+                  <div className="panelActions">
+                    <button type="button" className="btnOutline" disabled={ceoRunLoading} onClick={() => void kickAssistantHeartbeat()}>
+                      {ceoRunLoading ? "Kicking Assistant…" : "Kick Assistant heartbeat"}
+                    </button>
+                    <button type="button" className="btnOutline" disabled={heartbeatLoading} onClick={() => void runHeartbeatNow()}>
+                      {heartbeatLoading ? "Running…" : "Run all"}
+                    </button>
+                  </div>
+                </div>
+                {ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
+                <div className="runList">
+                  {latestHeartbeatRuns.length ? (
+                    latestHeartbeatRuns.map((run) => {
+                      const node = bootstrap.org.find((o) => o.id === run.orgNodeId);
+                      return (
+                        <div key={run.id} className="runRow">
+                          <strong>@{node?.handle ?? "unknown"}</strong>
+                          <span>{run.summary}</span>
+                          <span className="muted">{new Date(run.completedAt).toLocaleTimeString()}</span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="muted">No heartbeat runs recorded yet.</p>
+                  )}
                 </div>
               </div>
 
@@ -714,6 +996,52 @@ export function App() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </>
+        )}
+
+        {nav === "settings" && (
+          <>
+            <header className="mainHeader">
+              <h1>SETTINGS</h1>
+            </header>
+            <div className="mainBody">
+              <div className="settingsPanel">
+                <h2>Project operations</h2>
+                <label htmlFor="heartbeat-minutes">Assistant heartbeat interval</label>
+                <div className="settingsRow">
+                  <input
+                    id="heartbeat-minutes"
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={settingsDraft.heartbeatIntervalMinutes}
+                    onChange={(e) => setSettingsDraft((s) => ({ ...s, heartbeatIntervalMinutes: e.target.value }))}
+                  />
+                  <span className="muted">minutes</span>
+                </div>
+                <label htmlFor="daily-report-time">Assistant report time</label>
+                <input
+                  id="daily-report-time"
+                  type="time"
+                  value={settingsDraft.dailyReportTime}
+                  onChange={(e) => setSettingsDraft((s) => ({ ...s, dailyReportTime: e.target.value }))}
+                />
+                <label className="checkRow">
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft.skillsmpEnabled}
+                    onChange={(e) => setSettingsDraft((s) => ({ ...s, skillsmpEnabled: e.target.checked }))}
+                  />
+                  Enable external skill search
+                </label>
+                <p className="muted small">
+                  SkillsMP requires <code>SKILLSMP_API_KEY</code> in the API environment. The app never stores the raw key in browser state.
+                </p>
+                <button type="button" className="btnPrimary" onClick={() => void saveSettings()}>
+                  Save settings
+                </button>
               </div>
             </div>
           </>
@@ -740,18 +1068,12 @@ export function App() {
               <div className="channelPane">
                 <div className="channelHeader">
                   <h2>{threadNavTitle(activeChannelId)}</h2>
-                  {ceoDmThreadId && activeChannelId === ceoDmThreadId && ceoKickoffCard ? (
-                    ceoKickoffCard.status === "in_review" ? (
-                      <p className="calloutWarn channelHeaderNote">
-                        Kickoff is in review: reply in this DM or #general, then move the card to In progress on the Board.
-                      </p>
-                    ) : (
-                      <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runCeoKickoff()}>
-                        {ceoRunLoading ? "Running Codex…" : "Re-run CEO kickoff (Codex)"}
-                      </button>
-                    )
+                  {assistantDmThreadId && activeChannelId === assistantDmThreadId && assistantKickoffCard ? (
+                    <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runAssistantPlan()}>
+                      {ceoRunLoading ? "Running…" : "Kick Assistant planning heartbeat"}
+                    </button>
                   ) : null}
-                  {ceoDmThreadId && activeChannelId === ceoDmThreadId && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
+                  {assistantDmThreadId && activeChannelId === assistantDmThreadId && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
                 </div>
                 <div className="channelTimeline">
                   {channelMessages.map((m) => {
@@ -776,12 +1098,16 @@ export function App() {
                   <textarea
                     placeholder={`Message in ${threadNavTitle(activeChannelId)} (as @${OPERATOR_HANDLE})…`}
                     value={newMessage.body}
-                    onChange={(e) => setNewMessage({ body: e.target.value })}
+                    onChange={(e) => {
+                      setNewMessage({ body: e.target.value });
+                      if (messageError) setMessageError(null);
+                    }}
                   />
-                  <button type="button" className="btnPrimary" onClick={() => void postChannelMessage()}>
-                    Send
+                  <button type="button" className="btnPrimary" disabled={messageSending || !newMessage.body.trim()} onClick={() => void postChannelMessage()}>
+                    {messageSending ? "Sending…" : "Send"}
                   </button>
                 </div>
+                {messageError ? <p className="composerError">{messageError}</p> : null}
               </div>
             </div>
           </>
@@ -904,160 +1230,6 @@ export function App() {
           </>
         )}
 
-        {nav === "org" && (
-          <>
-            <header className="mainHeader">
-              <h1>ORG</h1>
-            </header>
-            <div className="mainBody orgWrap">
-              <section className="orgRoster" aria-label="Team roster">
-                <h2 className="orgRosterTitle">People</h2>
-                <p className="muted small orgRosterHint">Status reflects assigned board cards: In review → blocked, In progress → working, otherwise idle.</p>
-                <table className="orgRosterTable">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Handle</th>
-                      <th>Role</th>
-                      <th>Status</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...bootstrap.org]
-                      .sort((a, b) => a.handle.localeCompare(b.handle))
-                      .map((node) => {
-                        const ws = workStatusForNode(node.id, bootstrap.cards);
-                        return (
-                          <tr key={node.id}>
-                            <td>{node.name}</td>
-                            <td>@{node.handle}</td>
-                            <td>{node.role}</td>
-                            <td>
-                              <span className={`statusPill status-${ws}`}>{ws}</span>
-                            </td>
-                            <td>
-                              <button
-                                type="button"
-                                className="btnOutline orgRosterDm"
-                                onClick={() => {
-                                  setActiveChannelId(dmThreadId(bootstrap.company.operatorHandle, node.handle));
-                                  setNav("channels");
-                                }}
-                              >
-                                Message
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </section>
-              <div className="orgPage">
-              <div className="orgTree">{renderOrgTree(bootstrap.org, null, 0)}</div>
-              <div className="orgSide">
-                {selectedOrgNode ? (
-                  <div className="orgAgentPack">
-                    <h3>
-                      @{selectedOrgNode.handle} — agent.md, HEARTBEAT, SOUL, TOOLS
-                    </h3>
-                    <p className="muted small">
-                      Each hire gets defaults from the hiring manager and role; override here or when hiring. Only a <strong>direct manager</strong> can save edits
-                      (CEO root has no manager in-app).
-                    </p>
-                    <div className="orgFileTabs">
-                      {(
-                        [
-                          ["agentMd", "agent.md"],
-                          ["heartbeatMd", "HEARTBEAT.md"],
-                          ["soulMd", "SOUL.md"],
-                          ["toolsMd", "TOOLS.md"]
-                        ] as const
-                      ).map(([key, label]) => (
-                        <button
-                          key={key}
-                          type="button"
-                          className={orgFileTab === key ? "tabActive" : "tab"}
-                          onClick={() => setOrgFileTab(key)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <textarea
-                      className="orgFileEditor"
-                      spellCheck={false}
-                      value={agentFileDraft[orgFileTab]}
-                      onChange={(e) => setAgentFileDraft((d) => ({ ...d, [orgFileTab]: e.target.value }))}
-                    />
-                    {selectedOrgNode.reportsToId ? (
-                      <button type="button" className="primary" disabled={agentFilesSaving} onClick={() => void saveOrgAgentFiles()}>
-                        {agentFilesSaving ? "Saving…" : "Save pack (manager)"}
-                      </button>
-                    ) : (
-                      <p className="muted small">Read-only for top-level CEO (no org manager in tree).</p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="muted">Select someone in the org tree to view their four markdown files.</p>
-                )}
-                <div className="orgHire">
-                  <h3>Hire (manager creates subordinate)</h3>
-                  <p className="muted small">
-                    Pick the hiring manager (their node id is used as <code>actorOrgNodeId</code> and <code>reportsToId</code>). Optionally paste custom agent / heartbeat / soul /
-                    tools markdown — otherwise defaults apply for the role.
-                  </p>
-                  <div className="row">
-                    <select
-                      value={newNode.hiringManagerId}
-                      onChange={(e) => setNewNode((s) => ({ ...s, hiringManagerId: e.target.value }))}
-                    >
-                      <option value="">Hiring manager…</option>
-                      {orgOptions.map((node) => (
-                        <option key={node.id} value={node.id}>
-                          @{node.handle} — {node.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input placeholder="Display name" value={newNode.name} onChange={(e) => setNewNode((s) => ({ ...s, name: e.target.value }))} />
-                    <input placeholder="Handle" value={newNode.handle} onChange={(e) => setNewNode((s) => ({ ...s, handle: e.target.value }))} />
-                  </div>
-                  <div className="row">
-                    <input
-                      placeholder="Skills (comma-separated)"
-                      value={newNode.subtreeSkillsManifest}
-                      onChange={(e) => setNewNode((s) => ({ ...s, subtreeSkillsManifest: e.target.value }))}
-                    />
-                    <select value={newNode.role} onChange={(e) => setNewNode((s) => ({ ...s, role: e.target.value }))}>
-                      <option value="ceo">CEO</option>
-                      <option value="cto">CTO</option>
-                      <option value="engineer">Engineer</option>
-                      <option value="operator">Operator</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                    <button type="button" className="btnOutline" disabled={!newNode.hiringManagerId} onClick={() => void addOrgNode()}>
-                      Hire
-                    </button>
-                  </div>
-                  <details className="orgHireAdvanced">
-                    <summary>Optional markdown overrides (hire)</summary>
-                    <label>agent.md</label>
-                    <textarea value={newNode.agentMd} onChange={(e) => setNewNode((s) => ({ ...s, agentMd: e.target.value }))} spellCheck={false} />
-                    <label>HEARTBEAT.md</label>
-                    <textarea value={newNode.heartbeatMd} onChange={(e) => setNewNode((s) => ({ ...s, heartbeatMd: e.target.value }))} spellCheck={false} />
-                    <label>SOUL.md</label>
-                    <textarea value={newNode.soulMd} onChange={(e) => setNewNode((s) => ({ ...s, soulMd: e.target.value }))} spellCheck={false} />
-                    <label>TOOLS.md</label>
-                    <textarea value={newNode.toolsMd} onChange={(e) => setNewNode((s) => ({ ...s, toolsMd: e.target.value }))} spellCheck={false} />
-                  </details>
-                </div>
-              </div>
-              </div>
-            </div>
-          </>
-        )}
-
         {nav === "board" && (
           <>
             <header className="mainHeader">
@@ -1163,8 +1335,19 @@ export function App() {
                     </label>
                     <select
                       id="card-status"
-                      value={boardDetailCard.status}
-                      onChange={(e) => void setCardStatus(boardDetailCard.id, e.target.value as BoardCard["status"])}
+                      value={closingCardId === boardDetailCard.id ? "closed" : boardDetailCard.status}
+                      onChange={(e) => {
+                        const nextStatus = e.target.value as BoardCard["status"];
+                        setCompletionSummaryError(null);
+                        if (nextStatus === "closed" && boardDetailCard.status !== "closed") {
+                          setClosingCardId(boardDetailCard.id);
+                          setCompletionSummary(boardDetailCard.completionSummary ?? "");
+                          return;
+                        }
+                        setClosingCardId(null);
+                        setCompletionSummary("");
+                        void setCardStatus(boardDetailCard.id, nextStatus);
+                      }}
                     >
                       {(["backlog", "in_progress", "in_review", "closed"] as const).map((s) => (
                         <option key={s} value={s}>
@@ -1173,23 +1356,37 @@ export function App() {
                       ))}
                     </select>
                   </div>
-                  <div className="cardModalSection">
-                    <label className="muted cardModalK" htmlFor="codex-prompt">
-                      Codex prompt
-                    </label>
-                    <textarea
-                      id="codex-prompt"
-                      className="cardModalCodex"
-                      value={codexPromptByCard[boardDetailCard.id] ?? ""}
-                      onChange={(e) => setCodexPromptByCard((prev) => ({ ...prev, [boardDetailCard.id]: e.target.value }))}
-                    />
-                    <button type="button" className="btnOutline" onClick={() => void runCodex(boardDetailCard.id)}>
-                      Run Codex
-                    </button>
-                    {codexLogByCard[boardDetailCard.id] ? (
-                      <pre className="cardModalLog">{(codexLogByCard[boardDetailCard.id] ?? []).slice(-48).join("\n")}</pre>
-                    ) : null}
-                  </div>
+                  {closingCardId === boardDetailCard.id ? (
+                    <div className="cardModalSection closeSummaryBlock">
+                      <label className="muted cardModalK" htmlFor="completion-summary">
+                        Completion summary
+                      </label>
+                      <textarea
+                        id="completion-summary"
+                        value={completionSummary}
+                        onChange={(e) => {
+                          setCompletionSummary(e.target.value);
+                          if (completionSummaryError) setCompletionSummaryError(null);
+                        }}
+                        placeholder="What was done?"
+                      />
+                      {completionSummaryError ? <p className="fieldError">{completionSummaryError}</p> : null}
+                      <button
+                        type="button"
+                        className="btnPrimary"
+                        onClick={() => void closeCardWithSummary(boardDetailCard.id)}
+                        disabled={!completionSummary.trim()}
+                      >
+                        Close task
+                      </button>
+                    </div>
+                  ) : null}
+                  {boardDetailCard.status === "closed" && boardDetailCard.completionSummary ? (
+                    <div className="cardModalSection">
+                      <div className="muted cardModalK">Completion summary</div>
+                      <div className="cardModalDesc">{boardDetailCard.completionSummary}</div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}

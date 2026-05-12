@@ -2,13 +2,14 @@ import { z } from "zod";
 
 export type Id = string;
 
-export type Role = "ceo" | "cto" | "engineer" | "operator" | "custom";
+export type Role = "assistant" | "ceo" | "cto" | "engineer" | "operator" | "hiring_manager" | "custom";
 
 export const CARD_STATUS_VALUES = ["backlog", "in_progress", "in_review", "closed"] as const;
 export type CardStatus = (typeof CARD_STATUS_VALUES)[number];
 
 export const updateCardStatusSchema = z.object({
-  status: z.enum(CARD_STATUS_VALUES)
+  status: z.enum(CARD_STATUS_VALUES),
+  completionSummary: z.string().trim().min(1).max(4000).optional()
 });
 
 /** Per-agent markdown: same roles as agent.md, HEARTBEAT.md, SOUL.md, TOOLS.md on disk. */
@@ -24,6 +25,13 @@ export interface Company {
   name: string;
   goalId: Id;
   operatorHandle: string;
+}
+
+export interface CompanySettings {
+  companyId: Id;
+  heartbeatIntervalMinutes: number;
+  dailyReportTime: string;
+  skillsmpEnabled: boolean;
 }
 
 export interface Goal {
@@ -42,6 +50,7 @@ export interface OrgNode {
   reportsToId: Id | null;
   subtreeSkillsManifest: string[];
   files: AgentMarkdownPack;
+  lastHeartbeatAt: string | null;
 }
 
 export interface BoardColumn {
@@ -60,6 +69,7 @@ export interface BoardCard {
   status: CardStatus;
   assigneeOrgNodeId: Id | null;
   goalId: Id | null;
+  completionSummary?: string | null;
 }
 
 export interface ChannelMessage {
@@ -101,9 +111,38 @@ export interface Escalation {
   createdAt: string;
 }
 
+export interface HeartbeatRun {
+  id: Id;
+  companyId: Id;
+  orgNodeId: Id;
+  status: "completed" | "skipped" | "failed";
+  startedAt: string;
+  completedAt: string;
+  summary: string;
+  promotedCardIds: Id[];
+}
+
+export interface DailyReport {
+  id: Id;
+  companyId: Id;
+  authorOrgNodeId: Id | null;
+  reportDate: string;
+  body: string;
+  createdAt: string;
+}
+
 export const createCompanySchema = z.object({
   name: z.string().min(1),
   goalDescription: z.string().default("")
+});
+
+export const patchCompanySettingsSchema = z.object({
+  heartbeatIntervalMinutes: z.number().int().min(1).max(1440).optional(),
+  dailyReportTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
+  skillsmpEnabled: z.boolean().optional()
 });
 
 export const createOrgNodeSchema = z.object({
@@ -111,7 +150,7 @@ export const createOrgNodeSchema = z.object({
   actorOrgNodeId: z.string().min(1).nullable(),
   name: z.string().min(1),
   handle: z.string().min(1),
-  role: z.enum(["ceo", "cto", "engineer", "operator", "custom"]),
+  role: z.enum(["assistant", "ceo", "cto", "engineer", "operator", "hiring_manager", "custom"]),
   reportsToId: z.string().nullable(),
   subtreeSkillsManifest: z.array(z.string()).default([]),
   agentMd: z.string().optional(),
@@ -155,4 +194,9 @@ export const createEscalationSchema = z.object({
   cardId: z.string().nullable(),
   question: z.string().min(1),
   context: z.string().default("")
+});
+
+export const skillSearchSchema = z.object({
+  q: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(20).default(8)
 });
