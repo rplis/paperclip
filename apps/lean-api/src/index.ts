@@ -225,53 +225,146 @@ app.post("/api/companies/:companyId/assistant/run", async (req, res) => {
   });
 });
 
-function runCompanyHeartbeat(companyId: string) {
-  return store.runHeartbeatsForCompany(companyId, 2, { force: false });
+const activeAssistantHeartbeats = new Set<string>();
+
+function findPlanningCard(companyId: string, assistantId: string) {
+  return [...store.cards.values()].find(
+    (card) =>
+      card.companyId === companyId &&
+      card.assigneeOrgNodeId === assistantId &&
+      card.title.includes("Create the project plan")
+  );
 }
 
-app.post("/api/companies/:companyId/heartbeat", (req, res) => {
-  const companyId = req.params.companyId;
-  if (!store.companies.get(companyId)) return res.status(404).json({ error: "Company not found" });
-  const r = store.runHeartbeatsForCompany(companyId, 2, { force: true });
-  res.json(r);
+async function executeAgentActiveCard(agentId: string) {
+  const agent = store.orgNodes.get(agentId);
+  if (!agent) throw new Error("Agent not found");
+  const company = store.companies.get(agent.companyId);
+  if (!company) throw new Error("Company not found");
+
+  const activeCard = [...store.cards.values()]
+    .filter((card) => card.companyId === agent.companyId && card.assigneeOrgNodeId === agent.id && card.status === "in_progress")
+    .sort((a, b) => a.title.localeCompare(b.title))[0];
+
+  if (!activeCard) {
+    store.createMessage({
+      companyId: agent.companyId,
+      threadId: dmThreadId(company.operatorHandle, agent.handle),
+      authorType: "agent",
+      authorId: agent.id,
+      body: "Heartbeat checked in. I did not find an in-progress card to execute.",
+      linkedCardId: null
+    });
+    return { engine: null };
+  }
+
+  const goal = store.goals.get(company.goalId);
+  const result = await runCodexForCard({
+    cardId: activeCard.id,
+    prompt: buildAgentTaskPrompt({
+      companyName: company.name,
+      goalText: goal?.description ?? "(none)",
+      agentName: agent.name,
+      agentHandle: agent.handle,
+      role: agent.role,
+      cardTitle: activeCard.title,
+      cardDescription: activeCard.description,
+      agentMd: agent.files.agentMd,
+      heartbeatMd: agent.files.heartbeatMd,
+      soulMd: agent.files.soulMd,
+      toolsMd: agent.files.toolsMd
+    })
+  });
+  const raw = result.log.join("\n");
+  const withoutNoise = raw
+    .replace(/```json[\s\S]*?```/gi, "[json omitted]")
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (trimmed.startsWith("$ ")) return false;
+      if (trimmed.startsWith("[stdin]")) return false;
+      if (trimmed.startsWith("[stderr]")) return false;
+      if (trimmed === "tokens used") return false;
+      if (/^\d+(\.\d+)?$/.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+  const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
+
+  if (result.exitCode === 0) {
+    store.updateCardStatus(activeCard.id, "in_review", preview || "Heartbeat completed the assigned task.");
+  }
+  store.createMessage({
+    companyId: agent.companyId,
+    threadId: dmThreadId(company.operatorHandle, agent.handle),
+    authorType: "agent",
+    authorId: agent.id,
+    body:
+      result.exitCode === 0
+        ? `Completed "${activeCard.title}" and moved it to Review.\n\n${preview || "(no output)"}`
+        : `Heartbeat work pass failed on "${activeCard.title}" with exit ${result.exitCode}.\n\n${preview || "(no output)"}`,
+    linkedCardId: activeCard.id
+  });
+
+  return { engine: { cardId: result.cardId, exitCode: result.exitCode } };
+}
+
+async function runAssistantHeartbeat(companyId: string, options: { force: boolean }) {
+  const company = store.companies.get(companyId);
+  if (!company) return { ok: false as const, httpStatus: 404 as const, error: "Project not found" };
+  const assistant = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "assistant");
+  if (!assistant) return { ok: false as const, httpStatus: 404 as const, error: "Assistant not found" };
+
+  if (activeAssistantHeartbeats.has(assistant.id)) {
+    return { ok: true as const, heartbeat: null, engine: null, message: "Assistant heartbeat is already running." };
+  }
+
+  activeAssistantHeartbeats.add(assistant.id);
+  try {
+    const heartbeat = store.runHeartbeatForAgent(assistant.id, 1, { force: options.force });
+    const kickoff = findPlanningCard(companyId, assistant.id);
+
+    if (kickoff && kickoff.status !== "in_review" && kickoff.status !== "closed") {
+      const engine = await runAssistantPlanCodex(companyId);
+      if (!engine.ok) return { ok: false as const, httpStatus: engine.httpStatus, error: engine.error, heartbeat };
+      return { ok: true as const, heartbeat, engine };
+    }
+
+    const work = await executeAgentActiveCard(assistant.id);
+    return { ok: true as const, heartbeat, ...work };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Assistant heartbeat failed";
+    if (msg === "Agent heartbeat is not due yet") {
+      return { ok: true as const, heartbeat: null, engine: null, message: msg };
+    }
+    return { ok: false as const, httpStatus: 409 as const, error: msg };
+  } finally {
+    activeAssistantHeartbeats.delete(assistant.id);
+  }
+}
+
+function runCompanyHeartbeat(companyId: string) {
+  return runAssistantHeartbeat(companyId, { force: false });
+}
+
+app.post("/api/companies/:companyId/heartbeat", async (req, res) => {
+  const out = await runAssistantHeartbeat(req.params.companyId, { force: true });
+  if (!out.ok) {
+    res.status(out.httpStatus).json({ error: out.error });
+    return;
+  }
+  res.json(out);
 });
 
 async function handleAssistantHeartbeat(req: express.Request, res: express.Response) {
-  const companyId = req.params.companyId;
-  const company = store.companies.get(companyId);
-  if (!company) return res.status(404).json({ error: "Project not found" });
-  const assistant = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "assistant");
-  if (!assistant) return res.status(404).json({ error: "Assistant not found" });
-
-  const heartbeat = store.runHeartbeatsForCompany(companyId, 2, { force: true });
-
-  const kickoff = [...store.cards.values()].find(
-    (card) =>
-      card.companyId === companyId &&
-      card.assigneeOrgNodeId === assistant.id &&
-      card.title.includes("Create the project plan")
-  );
-
-  if (!kickoff || kickoff.status === "in_review" || kickoff.status === "closed") {
-    store.createMessage({
-      companyId,
-      threadId: dmThreadId(assistant.handle, company.operatorHandle),
-      authorType: "agent",
-      authorId: assistant.id,
-      body:
-        "Assistant heartbeat kicked manually. I checked the board and current messages. No open planning run is pending.",
-      linkedCardId: null
-    });
-    res.json({ heartbeat, engine: null, message: "Assistant heartbeat recorded; planning is not pending." });
+  const out = await runAssistantHeartbeat(req.params.companyId, { force: true });
+  if (!out.ok) {
+    res.status(out.httpStatus).json({ error: out.error });
     return;
   }
-
-  const engine = await runAssistantPlanCodex(companyId);
-  if (!engine.ok) {
-    res.status(engine.httpStatus).json({ heartbeat, error: engine.error });
-    return;
-  }
-  res.json({ heartbeat, engine });
+  res.json(out);
 }
 
 app.post("/api/companies/:companyId/assistant/heartbeat", handleAssistantHeartbeat);
@@ -285,92 +378,18 @@ app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
     if (!company) return res.status(404).json({ error: "Company not found" });
 
     if (agent.handle === "assistant") {
-      const kickoff = [...store.cards.values()].find(
-        (card) =>
-          card.companyId === agent.companyId &&
-          card.assigneeOrgNodeId === agent.id &&
-          card.title.includes("Create the project plan") &&
-          card.status !== "in_review" &&
-          card.status !== "closed"
-      );
-      if (kickoff) {
-        const heartbeat = store.runHeartbeatForAgent(agent.id, 2, { force: true });
-        const engine = await runAssistantPlanCodex(agent.companyId);
-        res.json({ ...heartbeat, engine });
+      const out = await runAssistantHeartbeat(agent.companyId, { force: true });
+      if (!out.ok) {
+        res.status(out.httpStatus).json({ error: out.error });
         return;
       }
-    }
-
-    const out = store.runHeartbeatForAgent(agent.id, 2, { force: true });
-
-    const activeCard = [...store.cards.values()]
-      .filter((card) => card.companyId === agent.companyId && card.assigneeOrgNodeId === agent.id && card.status === "in_progress")
-      .sort((a, b) => a.title.localeCompare(b.title))[0];
-
-    if (!activeCard) {
-      store.createMessage({
-        companyId: agent.companyId,
-        threadId: dmThreadId(company.operatorHandle, agent.handle),
-        authorType: "agent",
-        authorId: agent.id,
-        body: "Heartbeat kicked manually. I did not find an in-progress card to execute.",
-        linkedCardId: null
-      });
-      res.json({ ...out, engine: null });
+      res.json(out);
       return;
     }
 
-    const goal = store.goals.get(company.goalId);
-    const result = await runCodexForCard({
-      cardId: activeCard.id,
-      prompt: buildAgentTaskPrompt({
-        companyName: company.name,
-        goalText: goal?.description ?? "(none)",
-        agentName: agent.name,
-        agentHandle: agent.handle,
-        role: agent.role,
-        cardTitle: activeCard.title,
-        cardDescription: activeCard.description,
-        agentMd: agent.files.agentMd,
-        heartbeatMd: agent.files.heartbeatMd,
-        soulMd: agent.files.soulMd,
-        toolsMd: agent.files.toolsMd
-      })
-    });
-    const raw = result.log.join("\n");
-    const withoutNoise = raw
-      .replace(/```json[\s\S]*?```/gi, "[json omitted]")
-      .split("\n")
-      .filter((line) => {
-        const trimmed = line.trim();
-        if (!trimmed) return false;
-        if (trimmed.startsWith("$ ")) return false;
-        if (trimmed.startsWith("[stdin]")) return false;
-        if (trimmed.startsWith("[stderr]")) return false;
-        if (trimmed === "tokens used") return false;
-        if (/^\d+(\.\d+)?$/.test(trimmed)) return false;
-        return true;
-      })
-      .join("\n")
-      .trim();
-    const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
-
-    if (result.exitCode === 0) {
-      store.updateCardStatus(activeCard.id, "in_review", preview || "Heartbeat completed the assigned task.");
-    }
-    store.createMessage({
-      companyId: agent.companyId,
-      threadId: dmThreadId(company.operatorHandle, agent.handle),
-      authorType: "agent",
-      authorId: agent.id,
-      body:
-        result.exitCode === 0
-          ? `Completed "${activeCard.title}" and moved it to Review.\n\n${preview || "(no output)"}`
-          : `Heartbeat work pass failed on "${activeCard.title}" with exit ${result.exitCode}.\n\n${preview || "(no output)"}`,
-      linkedCardId: activeCard.id
-    });
-
-    res.json({ ...out, engine: { cardId: result.cardId, exitCode: result.exitCode } });
+    const out = store.runHeartbeatForAgent(agent.id, 1, { force: true });
+    const work = await executeAgentActiveCard(agent.id);
+    res.json({ ...out, ...work });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Agent heartbeat failed";
     const status = msg === "Agent not found" || msg === "Company not found" ? 404 : 409;
@@ -563,12 +582,10 @@ app.listen(port, () => {
   console.log(`[lean-api] scheduler checks every ${heartbeatMs}ms (LEAN_HEARTBEAT_MS); company settings decide whether agents are due`);
   setInterval(() => {
     for (const companyId of store.companies.keys()) {
-      try {
-        runCompanyHeartbeat(companyId);
-      } catch (err) {
+      void runCompanyHeartbeat(companyId).catch((err) => {
         // eslint-disable-next-line no-console
         console.error("[lean-api] heartbeat failed", companyId, err);
-      }
+      });
     }
   }, heartbeatMs);
 });
