@@ -81,7 +81,13 @@ Do the smallest useful unit of work for this card now. Return a concise progress
 2. Evidence or output for review.
 3. Remaining blocker or next step.
 
-Do not invent external state. If the card cannot be completed with available context, say exactly what is missing and phrase a DM question for @boss.`;
+Do not invent external state. If the card cannot be completed with available context, say exactly what is missing and phrase a DM question for @boss.
+
+IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
+\`\`\`json
+{"status":"review","summary":"What was completed and what the boss should review.","bossAsk":""}
+\`\`\`
+If you need @boss before continuing, use \`"status":"boss"\`, put the precise request in \`bossAsk\`, and explain what the boss should do next in \`summary\`.`;
 }
 
 type AssistantPlanCodexResult =
@@ -94,6 +100,41 @@ type AssistantPlanCodexResult =
       applied: { createdCards: number; errors: string[] } | null;
       planParsed: boolean;
     };
+
+type AssistantTaskResult = {
+  status: "review" | "boss";
+  summary: string;
+  bossAsk: string;
+};
+
+function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | null {
+  const text = logLines.join("\n");
+  const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  for (const match of matches.reverse()) {
+    if (!match[1]) continue;
+    try {
+      const parsed = JSON.parse(match[1].trim()) as Record<string, unknown>;
+      const status = parsed.status === "boss" ? "boss" : parsed.status === "review" ? "review" : null;
+      if (!status) continue;
+      return {
+        status,
+        summary: String(parsed.summary ?? "").trim(),
+        bossAsk: String(parsed.bossAsk ?? "").trim()
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function inferBossDependency(cardTitle: string, cardDescription: string, parsed: AssistantTaskResult | null) {
+  if (parsed?.status === "boss" || parsed?.bossAsk) return true;
+  const taskText = `${cardTitle}\n${cardDescription}`;
+  return /@boss|ask boss|boss to|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
+    taskText
+  );
+}
 
 async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCodexResult> {
   const company = store.companies.get(companyId);
@@ -201,6 +242,7 @@ app.get("/api/companies", (_req, res) => {
         cards: cards.length,
         backlog: cards.filter((card) => card.status === "backlog").length,
         inProgress: cards.filter((card) => card.status === "in_progress").length,
+        boss: cards.filter((card) => card.status === "boss").length,
         inReview: cards.filter((card) => card.status === "in_review").length,
         closed: cards.filter((card) => card.status === "closed").length,
         heartbeatRuns: heartbeatRuns.length
@@ -292,9 +334,23 @@ async function executeAgentActiveCard(agentId: string) {
     .join("\n")
     .trim();
   const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
+  const taskResult = result.exitCode === 0 ? extractAssistantTaskResult(result.log) : null;
+  const summary = taskResult?.summary || preview || "Heartbeat completed the assigned task.";
+  const needsBoss = result.exitCode === 0 && inferBossDependency(activeCard.title, activeCard.description, taskResult);
+  const nextStatus = needsBoss ? "boss" : "in_review";
 
   if (result.exitCode === 0) {
-    store.updateCardStatus(activeCard.id, "in_review", preview || "Heartbeat completed the assigned task.");
+    store.updateCardStatus(activeCard.id, nextStatus, summary);
+    if (needsBoss) {
+      store.createMessage({
+        companyId: agent.companyId,
+        threadId: dmThreadId(company.operatorHandle, agent.handle),
+        authorType: "agent",
+        authorId: agent.id,
+        body: taskResult?.bossAsk || summary,
+        linkedCardId: activeCard.id
+      });
+    }
   }
   store.createMessage({
     companyId: agent.companyId,
@@ -303,7 +359,9 @@ async function executeAgentActiveCard(agentId: string) {
     authorId: agent.id,
     body:
       result.exitCode === 0
-        ? `Completed "${activeCard.title}" and moved it to Review.\n\n${preview || "(no output)"}`
+        ? needsBoss
+          ? `Moved "${activeCard.title}" to Boss.\n\n${summary}`
+          : `Completed "${activeCard.title}" and moved it to Review.\n\n${summary}`
         : `Heartbeat work pass failed on "${activeCard.title}" with exit ${result.exitCode}.\n\n${preview || "(no output)"}`,
     linkedCardId: activeCard.id
   });

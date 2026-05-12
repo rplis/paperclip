@@ -89,6 +89,7 @@ function normalizeCardStatus(raw: string | undefined): CardStatus {
   if (raw === "closed") return "closed";
   if (raw === "in_progress") return "in_progress";
   if (raw === "in_review") return "in_review";
+  if (raw === "boss") return "boss";
   return "backlog";
 }
 
@@ -187,6 +188,7 @@ export class LeanStore {
     for (const item of snapshot.dailyReports ?? []) this.dailyReports.set(item.id, item);
     for (const [key, value] of snapshot.runLogs ?? []) this.runLogs.set(key, value);
     this.sanitizeVisibleEngineNames();
+    for (const company of this.companies.values()) this.ensureBoardColumns(company.id);
   }
 
   private sanitizeVisibleEngineNames() {
@@ -411,21 +413,31 @@ export class LeanStore {
   }
 
   private seedBoard(companyId: string) {
+    this.ensureBoardColumns(companyId);
+  }
+
+  private ensureBoardColumns(companyId: string) {
     const defs: Array<{ title: string; status: CardStatus }> = [
       { title: "Backlog", status: "backlog" },
       { title: "In progress", status: "in_progress" },
+      { title: "Boss", status: "boss" },
       { title: "Review", status: "in_review" },
       { title: "Closed", status: "closed" }
     ];
     defs.forEach((d, index) => {
-      const col: BoardColumn = {
-        id: uid(),
+      const existing = [...this.columns.values()].find((col) => col.companyId === companyId && col.status === d.status);
+      if (existing) {
+        this.columns.set(existing.id, { ...existing, title: d.title, order: index });
+        return;
+      }
+      const id = uid();
+      this.columns.set(id, {
+        id,
         companyId,
         title: d.title,
         status: d.status,
         order: index
-      };
-      this.columns.set(col.id, col);
+      });
     });
   }
 
@@ -533,7 +545,7 @@ export class LeanStore {
       ...card,
       status,
       completionSummary:
-        status === "closed" || status === "in_review"
+        status === "closed" || status === "in_review" || status === "boss"
           ? completionSummary?.trim() || card.completionSummary || null
           : card.completionSummary ?? null
     };
@@ -1074,7 +1086,7 @@ export class LeanStore {
       "",
       `Goal: ${this.goals.get(company.goalId)?.description || "No goal description set."}`,
       "",
-      `Board: ${byStatus("backlog")} backlog, ${byStatus("in_progress")} in progress, ${byStatus("in_review")} review, ${byStatus("closed")} closed.`,
+      `Board: ${byStatus("backlog")} backlog, ${byStatus("in_progress")} in progress, ${byStatus("boss")} boss, ${byStatus("in_review")} review, ${byStatus("closed")} closed.`,
       `Agent: @assistant is the only AI worker.`,
       `Escalations: ${openEscalations.length} open item(s) need attention.`,
       "",

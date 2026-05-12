@@ -4,7 +4,7 @@ export type Id = string;
 
 export type Role = "assistant" | "ceo" | "cto" | "engineer" | "operator" | "hiring_manager" | "custom";
 
-export const CARD_STATUS_VALUES = ["backlog", "in_progress", "in_review", "closed"] as const;
+export const CARD_STATUS_VALUES = ["backlog", "in_progress", "boss", "in_review", "closed"] as const;
 export type CardStatus = (typeof CARD_STATUS_VALUES)[number];
 
 export const updateCardStatusSchema = z.object({

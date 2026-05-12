@@ -39,6 +39,7 @@ interface CompanySummary extends Company {
     cards: number;
     backlog: number;
     inProgress: number;
+    boss: number;
     inReview: number;
     closed: number;
     heartbeatRuns: number;
@@ -120,6 +121,7 @@ function boardStatusLabel(s: BoardCard["status"]): string {
   const labels: Record<BoardCard["status"], string> = {
     backlog: "Backlog",
     in_progress: "In progress",
+    boss: "Boss",
     in_review: "Review",
     closed: "Closed"
   };
@@ -183,6 +185,8 @@ export function App() {
   const [closingCardId, setClosingCardId] = useState<string | null>(null);
   const [completionSummary, setCompletionSummary] = useState("");
   const [completionSummaryError, setCompletionSummaryError] = useState<string | null>(null);
+  const [cardComment, setCardComment] = useState("");
+  const [cardCommentSending, setCardCommentSending] = useState(false);
   const [lastWorkspaceSyncAt, setLastWorkspaceSyncAt] = useState<number | null>(null);
   const [settingsDraft, setSettingsDraft] = useState({
     heartbeatIntervalMinutes: "10",
@@ -217,6 +221,7 @@ export function App() {
     setClosingCardId(null);
     setCompletionSummary("");
     setCompletionSummaryError(null);
+    setCardComment("");
   }, [boardDetailCardId]);
 
   const channelIds = useMemo(() => {
@@ -515,6 +520,29 @@ export function App() {
     setCompletionSummary("");
   }
 
+  async function postCardComment(card: BoardCard) {
+    if (!bootstrap || !cardComment.trim()) return;
+    setCardCommentSending(true);
+    try {
+      await fetch(`${API}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyId: bootstrap.company.id,
+          threadId: dmThreadId(bootstrap.company.operatorHandle, "assistant"),
+          authorType: "user",
+          authorId: null,
+          body: cardComment.trim(),
+          linkedCardId: card.id
+        })
+      });
+      setCardComment("");
+      await load(bootstrap.company.id);
+    } finally {
+      setCardCommentSending(false);
+    }
+  }
+
   async function postChannelMessage() {
     if (!bootstrap || !newMessage.body.trim()) return;
     setMessageSending(true);
@@ -658,12 +686,13 @@ export function App() {
   }, [bootstrap?.company.id, load]);
 
   const dashStats = useMemo(() => {
-    if (!bootstrap) return { total: 0, backlog: 0, inProgress: 0, inReview: 0, closed: 0, team: 0 };
+    if (!bootstrap) return { total: 0, backlog: 0, inProgress: 0, boss: 0, inReview: 0, closed: 0, team: 0 };
     const cards = bootstrap.cards;
     return {
       total: cards.length,
       backlog: cards.filter((c) => c.status === "backlog").length,
       inProgress: cards.filter((c) => c.status === "in_progress").length,
+      boss: cards.filter((c) => c.status === "boss").length,
       inReview: cards.filter((c) => c.status === "in_review").length,
       closed: cards.filter((c) => c.status === "closed").length,
       team: bootstrap.org.length
@@ -734,6 +763,7 @@ export function App() {
                   </div>
                   <div className="companyStats">
                     <span>{company.stats.inProgress} in progress</span>
+                    <span>{company.stats.boss} boss</span>
                     <span>{company.stats.inReview} review</span>
                     <span>{company.stats.backlog} backlog</span>
                     <span>{company.stats.closed} closed</span>
@@ -921,6 +951,10 @@ export function App() {
                 <div className="statCard">
                   <h3>Backlog</h3>
                   <div className="num">{dashStats.backlog}</div>
+                </div>
+                <div className="statCard">
+                  <h3>Boss</h3>
+                  <div className="num">{dashStats.boss}</div>
                 </div>
                 <div className="statCard">
                   <h3>Review</h3>
@@ -1349,7 +1383,7 @@ export function App() {
                         void setCardStatus(boardDetailCard.id, nextStatus);
                       }}
                     >
-                      {(["backlog", "in_progress", "in_review", "closed"] as const).map((s) => (
+                      {(["backlog", "in_progress", "boss", "in_review", "closed"] as const).map((s) => (
                         <option key={s} value={s}>
                           {boardStatusLabel(s)}
                         </option>
@@ -1381,12 +1415,53 @@ export function App() {
                       </button>
                     </div>
                   ) : null}
-                  {boardDetailCard.status === "closed" && boardDetailCard.completionSummary ? (
+                  {(boardDetailCard.status === "closed" || boardDetailCard.status === "boss" || boardDetailCard.status === "in_review") &&
+                  boardDetailCard.completionSummary ? (
                     <div className="cardModalSection">
-                      <div className="muted cardModalK">Completion summary</div>
+                      <div className="muted cardModalK">{boardDetailCard.status === "boss" ? "What boss needs to do" : "Completion summary"}</div>
                       <div className="cardModalDesc">{boardDetailCard.completionSummary}</div>
                     </div>
                   ) : null}
+                  <div className="cardModalSection">
+                    <div className="muted cardModalK">Conversation</div>
+                    <div className="cardThread">
+                      {bootstrap.messages
+                        .filter((message) => message.linkedCardId === boardDetailCard.id)
+                        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+                        .map((message) => {
+                          const author =
+                            message.authorType === "system"
+                              ? "system"
+                              : message.authorType === "user"
+                                ? OPERATOR_HANDLE
+                                : bootstrap.org.find((o) => o.id === message.authorId)?.handle ?? "agent";
+                          return (
+                            <div key={message.id} className="cardThreadMsg">
+                              <div className="channelMsgMeta">
+                                <strong>@{author}</strong>
+                                <span className="muted">{new Date(message.createdAt).toLocaleString()}</span>
+                              </div>
+                              <div className="channelMsgBody">{message.body}</div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <div className="channelComposer cardComposer">
+                      <textarea
+                        placeholder="Reply on this task…"
+                        value={cardComment}
+                        onChange={(e) => setCardComment(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btnPrimary"
+                        disabled={cardCommentSending || !cardComment.trim()}
+                        onClick={() => void postCardComment(boardDetailCard)}
+                      >
+                        {cardCommentSending ? "Sending…" : "Comment"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
