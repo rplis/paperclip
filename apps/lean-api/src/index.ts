@@ -233,7 +233,6 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
 
   try {
     const result = await runCodexForCard({ cardId: kickoff.id, prompt });
-    const raw = (result.log ?? []).join("\n");
     const plan = result.exitCode === 0 ? store.extractAssistantPlanJsonFromLog(result.log) : null;
     let applied = { createdCards: 0, errors: [] as string[] };
     if (plan && result.exitCode === 0) {
@@ -249,16 +248,15 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
 
     let body: string;
     if (result.exitCode !== 0) {
-      const tail = raw.length > 1600 ? `${raw.slice(0, 1600)}…` : raw;
-      body = `Run finished with exit ${result.exitCode}. Log:\n\n${tail || "(no log lines)"}`;
+      body = `Assistant planning heartbeat failed: ${extractCodexError(result.log)}`;
     } else if (plan && applied.createdCards > 0) {
       const warn = applied.errors.length ? ` Notes: ${applied.errors.join(" · ")}` : "";
       body = `Applied the project plan: ${applied.createdCards} new Backlog card(s). The planning card is in Review.${warn}`;
     } else if (plan) {
       body = `Parsed the JSON plan but created no cards (${applied.errors.join(" · ") || "empty or invalid entries"}).`;
     } else {
-      const preview = raw.replace(/```json[\s\S]*?```/gi, "[json plan omitted]").slice(0, 1200);
-      body = `No fenced json code block was found in the model output, so the Board was not updated. Re-run after the model emits a valid JSON plan block. Log preview:\n\n${preview || "(empty)"}`;
+      const preview = cleanCodexLog(result.log).replace(/```json[\s\S]*?```/gi, "[json plan omitted]").slice(0, 1200);
+      body = `No fenced json code block was found in the model output, so the Board was not updated. Re-run after the model emits a valid JSON plan block.\n\n${preview || "(empty)"}`;
     }
 
     store.createMessage({

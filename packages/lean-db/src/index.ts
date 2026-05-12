@@ -34,6 +34,18 @@ function extractMentions(text: string): string[] {
   return [...new Set(matches.map((m) => m.slice(1).toLowerCase()))];
 }
 
+function cleanConversationBody(text: string) {
+  const runTranscriptMarker = /(?:^|\n)--------\nmodel:/;
+  const withoutRunTranscript = runTranscriptMarker.test(text)
+    ? text.split(runTranscriptMarker)[0]?.trim() || "Assistant run details omitted."
+    : text;
+
+  return withoutRunTranscript
+    .replace(/Heartbeat work pass failed on "([^"]+)" with exit \d+\.\s*(?:\n+|\s*)\(no output\)/g, 'Assistant runtime failed on "$1".')
+    .replace(/Heartbeat work pass failed on "([^"]+)" with exit \d+\./g, 'Assistant runtime failed on "$1".')
+    .trim();
+}
+
 export type CeoPlanJson = {
   hires?: Array<{
     name?: string;
@@ -207,6 +219,8 @@ export class LeanStore {
         .replace(/"in_review"\|/g, "")
         .replace(/\|"in_review"\|/g, "|")
         .replace(/Move the card to In review when waiting for @boss approval; create the hire only after approval\./g, "If @boss approval is needed, create or assign a clear task to @boss instead of parking work in a review status. Create the hire only after approval.")
+        .replace(/write a direct message in `dm-assistant-boss` and leave the task in progress with the blocker stated\./g, "write a direct message in `dm-assistant-boss` and move the task to Boss with the blocker stated.")
+        .replace(/If blocked by missing human input, DM @boss in `dm-assistant-boss` with a precise question\./g, "If blocked by missing human input, DM @boss in `dm-assistant-boss` with a precise question and move the card to Boss.")
         .replace(/This card is already In review and waiting on you\./g, "This now needs a delegated follow-up task if action is still required.")
         .replace(/card\(s\) are In review—ping @boss in this thread or #general if you need a decision so work can keep moving\./g, "card(s) were waiting for review. Create explicit follow-up tasks for whoever owns the next action.");
 
@@ -214,7 +228,7 @@ export class LeanStore {
       this.cards.set(id, { ...card, title: clean(card.title), description: clean(card.description) });
     }
     for (const [id, message] of this.messages) {
-      this.messages.set(id, { ...message, body: clean(message.body) });
+      this.messages.set(id, { ...message, body: cleanConversationBody(clean(message.body)) });
     }
     for (const [id, node] of this.orgNodes) {
       this.orgNodes.set(id, {
@@ -564,11 +578,13 @@ export class LeanStore {
   }
 
   createMessage(input: Omit<ChannelMessage, "id" | "createdAt" | "mentions">) {
+    const body = cleanConversationBody(input.body);
     const message: ChannelMessage = {
       id: uid(),
       createdAt: new Date().toISOString(),
-      mentions: extractMentions(input.body),
-      ...input
+      mentions: extractMentions(body),
+      ...input,
+      body
     };
     this.messages.set(message.id, message);
     this.persist();
