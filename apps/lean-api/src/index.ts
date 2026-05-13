@@ -10,7 +10,6 @@ import {
   createOrgNodeSchema,
   patchOrgAgentFilesBodySchema,
   patchCompanySettingsSchema,
-  skillSearchSchema,
   updateCardStatusSchema
 } from "@lean/shared";
 import { runCodexForCard } from "@lean/runner-codex";
@@ -20,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 
 function buildAssistantPlanPrompt(projectName: string, goalText: string, kickoff: { title: string; description: string }) {
-  return `You are the Assistant for project "${projectName}". You are the only AI agent and you run on the Codex engine.
+  return `You are the Planning Agent for project "${projectName}". You run on the Kodeks/Codex execution engine inside an autonomous project team.
 
 Project goal (source of truth):
 ${goalText}
@@ -30,15 +29,15 @@ Title: ${kickoff.title}
 Description:
 ${kickoff.description}
 
-Create a detailed implementation plan for this goal and publish it as Kanban Backlog cards. Each card must be small enough to complete in roughly five minutes.
+Create a detailed implementation plan and publish it as Kanban cards. Include milestones, tasks/subtasks, dependencies, priorities, execution order, required boss decisions, and risks.
 
 Deliver a concise written plan. If the goal is missing a required human decision, ask @boss in the narrative and include a card that captures the blocker.
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
 \`\`\`json
-{"cards":[{"title":"Clarify the MVP outcome","description":"Ask @boss for the exact success criterion and deadline, then update the board with the answer."},{"title":"Draft the first implementation checkpoint","description":"Create a short checkpoint with the first visible deliverable and review criteria."}]}
+{"cards":[{"title":"Example planning card - replace with real work","description":"Describe one concrete task that advances this specific project goal.","priority":"high","dependencies":[],"risks":["Example risk"],"requiredUserDecision":null}]}
 \`\`\`
-Rules: Max 12 cards. No org chart, hiring, CEO, departments, or other agents. Every card title should name one concrete action.`;
+Rules: Max 16 cards. Use only this agent model: Supervisor, Planning, Developer, Recovery. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action.`;
 }
 
 function buildAgentTaskPrompt(input: {
@@ -89,9 +88,10 @@ Do not invent external state. If the card cannot be completed with available con
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
 \`\`\`json
-{"status":"review","summary":"What was completed and what the boss should review.","bossAsk":""}
+{"status":"done","summary":"What was completed and what evidence exists.","bossAsk":""}
 \`\`\`
-If you need @boss before continuing, use \`"status":"boss"\`, put the precise request in \`bossAsk\`, and explain what the boss should do next in \`summary\`.`;
+If you need @boss before continuing, use \`"status":"waiting_user"\`, put the precise request in \`bossAsk\`, and explain what boss should do next in \`summary\`.
+If you need Supervisor validation before execution, use \`"status":"waiting_supervisor"\` and summarize the execution plan.`;
 }
 
 type AssistantPlanCodexResult =
@@ -106,7 +106,7 @@ type AssistantPlanCodexResult =
     };
 
 type AssistantTaskResult = {
-  status: "review" | "boss";
+  status: "done" | "waiting_user" | "waiting_supervisor";
   summary: string;
   bossAsk: string;
 };
@@ -118,7 +118,14 @@ function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | n
     if (!match[1]) continue;
     try {
       const parsed = JSON.parse(match[1].trim()) as Record<string, unknown>;
-      const status = parsed.status === "boss" ? "boss" : parsed.status === "review" ? "review" : null;
+      const status =
+        parsed.status === "waiting_user" || parsed.status === "boss"
+          ? "waiting_user"
+          : parsed.status === "waiting_supervisor" || parsed.status === "review"
+            ? "waiting_supervisor"
+            : parsed.status === "done"
+              ? "done"
+              : null;
       if (!status) continue;
       return {
         status,
@@ -133,9 +140,9 @@ function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | n
 }
 
 function inferBossDependency(cardTitle: string, cardDescription: string, parsed: AssistantTaskResult | null) {
-  if (parsed) return parsed.status === "boss" || Boolean(parsed.bossAsk);
+  if (parsed) return parsed.status === "waiting_user" || Boolean(parsed.bossAsk);
   const taskText = `${cardTitle}\n${cardDescription}`;
-  return /@boss|ask boss|boss to|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
+  return /@boss|ask boss|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
     taskText
   );
 }
@@ -185,8 +192,8 @@ function buildCardConversation(cardId: string, companyId: string) {
         message.authorType === "system"
           ? "system"
           : message.authorType === "user"
-            ? "boss"
-            : store.orgNodes.get(message.authorId ?? "")?.handle ?? "assistant";
+          ? "boss"
+          : store.orgNodes.get(message.authorId ?? "")?.handle ?? "agent";
       const body = message.body.includes("--------\nmodel:")
         ? message.body.split("--------\nmodel:")[0]?.trim() || "Previous assistant run log omitted."
         : message.body;
@@ -196,7 +203,7 @@ function buildCardConversation(cardId: string, companyId: string) {
     .join("\n\n");
 }
 
-function latestBossCommentMs(cardId: string, companyId: string) {
+function latestUserCommentMs(cardId: string, companyId: string) {
   let latest = 0;
   for (const message of store.messages.values()) {
     if (message.companyId !== companyId || message.linkedCardId !== cardId || message.authorType !== "user") continue;
@@ -206,13 +213,13 @@ function latestBossCommentMs(cardId: string, companyId: string) {
   return latest;
 }
 
-function findRuntimeBlockedBossCard(companyId: string, assistantId: string) {
+function findRuntimeBlockedUserCard(companyId: string, assistantId: string) {
   return [...store.cards.values()].find(
     (card) =>
       card.companyId === companyId &&
       card.assigneeOrgNodeId === assistantId &&
-      card.status === "boss" &&
-      card.completionSummary?.startsWith("Assistant runtime needs attention:")
+      card.status === "waiting_user" &&
+      card.completionSummary?.startsWith("Kodeks runtime needs attention:")
   );
 }
 
@@ -220,14 +227,9 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
   const company = store.companies.get(companyId);
   if (!company) return { ok: false, httpStatus: 404, error: "Project not found" };
   const goal = store.goals.get(company.goalId);
-  const assistant = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "assistant");
-  if (!assistant) return { ok: false, httpStatus: 404, error: "Assistant not found" };
-  const kickoff = [...store.cards.values()].find(
-    (c) =>
-      c.companyId === companyId &&
-      c.assigneeOrgNodeId === assistant.id &&
-      c.title.includes("Create the project plan")
-  );
+  const assistant = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "planner");
+  if (!assistant) return { ok: false, httpStatus: 404, error: "Planning Agent not found" };
+  const kickoff = findPlanningCard(companyId, assistant.id);
   if (!kickoff) return { ok: false, httpStatus: 404, error: "Planning card not found" };
   const prompt = buildAssistantPlanPrompt(company.name, goal?.description ?? "(none)", kickoff);
 
@@ -240,18 +242,24 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
       if (applied.createdCards > 0) {
         store.updateCardStatus(
           kickoff.id,
-          "in_review",
-          `Assistant planning completed: created ${applied.createdCards} backlog card(s) from the structured JSON plan.`
+          "waiting_supervisor",
+          `Planning Agent created ${applied.createdCards} task card(s) from the structured JSON plan. Supervisor validation is next.`
         );
       }
     }
 
     let body: string;
     if (result.exitCode !== 0) {
-      body = `Assistant planning heartbeat failed: ${extractCodexError(result.log)}`;
+      const errorSummary = extractCodexError(result.log);
+      store.updateCardStatus(
+        kickoff.id,
+        "waiting_user",
+        `Planning runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
+      );
+      body = `Planning heartbeat failed: ${errorSummary}`;
     } else if (plan && applied.createdCards > 0) {
       const warn = applied.errors.length ? ` Notes: ${applied.errors.join(" · ")}` : "";
-      body = `Applied the project plan: ${applied.createdCards} new Backlog card(s). The planning card is in Review.${warn}`;
+      body = `Applied the project plan: ${applied.createdCards} new Kanban card(s). The planning card is waiting for Supervisor validation.${warn}`;
     } else if (plan) {
       body = `Parsed the JSON plan but created no cards (${applied.errors.join(" · ") || "empty or invalid entries"}).`;
     } else {
@@ -282,7 +290,7 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
       threadId: dmThreadId(assistant.handle, company.operatorHandle),
       authorType: "agent",
       authorId: assistant.id,
-      body: `Assistant planning heartbeat failed: ${msg}`,
+      body: `Planning heartbeat failed: ${msg}`,
       linkedCardId: kickoff.id
     });
     return { ok: false, httpStatus: 400, error: msg };
@@ -301,7 +309,7 @@ app.post("/api/companies", (req, res) => {
     res.status(201).json(created);
     void runAssistantPlanCodex(created.company.id).catch((err) => {
       // eslint-disable-next-line no-console
-      console.error("[lean-api] Assistant auto-run after createProject:", err);
+      console.error("[lean-api] planning auto-run after createProject:", err);
     });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Invalid body" });
@@ -320,9 +328,9 @@ app.get("/api/companies", (_req, res) => {
         cards: cards.length,
         backlog: cards.filter((card) => card.status === "backlog").length,
         inProgress: cards.filter((card) => card.status === "in_progress").length,
-        boss: cards.filter((card) => card.status === "boss").length,
-        inReview: cards.filter((card) => card.status === "in_review").length,
-        closed: cards.filter((card) => card.status === "closed").length,
+        boss: cards.filter((card) => card.status === "waiting_user").length,
+        inReview: cards.filter((card) => card.status === "waiting_supervisor").length,
+        closed: cards.filter((card) => card.status === "done").length,
         heartbeatRuns: heartbeatRuns.length
       }
     };
@@ -345,15 +353,49 @@ app.post("/api/companies/:companyId/assistant/run", async (req, res) => {
   });
 });
 
-const activeAssistantHeartbeats = new Set<string>();
+const activeAssistantHeartbeats = new Map<string, number>();
+const ACTIVE_HEARTBEAT_STALE_MS = 15 * 60_000;
 
 function findPlanningCard(companyId: string, assistantId: string) {
-  return [...store.cards.values()].find(
+  return [...store.cards.values()]
+    .filter(
+      (card) =>
+        card.companyId === companyId &&
+        card.assigneeOrgNodeId === assistantId &&
+        (card.title.includes("Generate autonomous project plan") || card.title.includes("Create the project plan"))
+    )
+    .sort((a, b) => {
+      if (a.status !== "done" && b.status === "done") return -1;
+      if (a.status === "done" && b.status !== "done") return 1;
+      return a.title.localeCompare(b.title);
+    })[0];
+}
+
+function createContinuationPlanningCard(companyId: string, plannerId: string) {
+  const company = store.companies.get(companyId);
+  if (!company) throw new Error("Project not found");
+  const existing = [...store.cards.values()].find(
     (card) =>
       card.companyId === companyId &&
-      card.assigneeOrgNodeId === assistantId &&
-      card.title.includes("Create the project plan")
+      card.assigneeOrgNodeId === plannerId &&
+      card.status !== "done" &&
+      card.title.includes("Generate autonomous project plan")
   );
+  if (existing) return existing;
+
+  const card = store.createCard({
+    companyId,
+    title: "Generate autonomous project plan - continuation",
+    description:
+      "All current execution cards are done. Re-read the project goal, previous task outputs, and conversations, then generate the next day-by-day traffic-growth tasks. Focus on actions that move epubtoepub.com toward qualified traffic and 10k MRR over time.",
+    priority: "high",
+    assigneeOrgNodeId: plannerId,
+    goalId: company.goalId,
+    dependencies: [],
+    risks: ["Without a continuation plan, the autonomous project loop stalls after the first batch."],
+    requiredUserDecision: null
+  });
+  return store.updateCardStatus(card.id, "in_progress");
 }
 
 async function executeAgentActiveCard(agentId: string) {
@@ -365,7 +407,7 @@ async function executeAgentActiveCard(agentId: string) {
   const activeCard = [...store.cards.values()]
     .filter((card) => card.companyId === agent.companyId && card.assigneeOrgNodeId === agent.id && card.status === "in_progress")
     .sort((a, b) => {
-      const byBossComment = latestBossCommentMs(b.id, agent.companyId) - latestBossCommentMs(a.id, agent.companyId);
+      const byBossComment = latestUserCommentMs(b.id, agent.companyId) - latestUserCommentMs(a.id, agent.companyId);
       return byBossComment !== 0 ? byBossComment : a.title.localeCompare(b.title);
     })[0];
 
@@ -403,12 +445,12 @@ async function executeAgentActiveCard(agentId: string) {
   const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
   const taskResult = result.exitCode === 0 ? extractAssistantTaskResult(result.log) : null;
   const summary = taskResult?.summary || preview || "Heartbeat completed the assigned task.";
-  const needsBoss = result.exitCode === 0 && inferBossDependency(activeCard.title, activeCard.description, taskResult);
-  const nextStatus = needsBoss ? "boss" : "in_review";
+  const needsUser = result.exitCode === 0 && inferBossDependency(activeCard.title, activeCard.description, taskResult);
+  const nextStatus = taskResult?.status === "waiting_supervisor" ? "waiting_supervisor" : needsUser ? "waiting_user" : "done";
 
   if (result.exitCode === 0) {
     store.updateCardStatus(activeCard.id, nextStatus, summary);
-    if (needsBoss) {
+    if (needsUser) {
       store.createMessage({
         companyId: agent.companyId,
         threadId: dmThreadId(company.operatorHandle, agent.handle),
@@ -422,8 +464,8 @@ async function executeAgentActiveCard(agentId: string) {
     const errorSummary = extractCodexError(result.log);
     store.updateCardStatus(
       activeCard.id,
-      "boss",
-      `Assistant runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
+      "waiting_user",
+      `Kodeks runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
     );
   }
   store.createMessage({
@@ -433,10 +475,12 @@ async function executeAgentActiveCard(agentId: string) {
     authorId: agent.id,
     body:
       result.exitCode === 0
-        ? needsBoss
-          ? `Moved "${activeCard.title}" to Boss.\n\n${summary}`
-          : `Completed "${activeCard.title}" and moved it to Review.\n\n${summary}`
-        : `Moved "${activeCard.title}" to Boss because the assistant runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
+        ? needsUser
+          ? `Moved "${activeCard.title}" to Waiting for Boss.\n\n${summary}`
+          : nextStatus === "waiting_supervisor"
+            ? `Moved "${activeCard.title}" to Waiting for Supervisor.\n\n${summary}`
+            : `Completed "${activeCard.title}" and moved it to Done.\n\n${summary}`
+        : `Moved "${activeCard.title}" to Waiting for Boss because the Kodeks runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
     linkedCardId: activeCard.id
   });
 
@@ -446,47 +490,73 @@ async function executeAgentActiveCard(agentId: string) {
 async function runAssistantHeartbeat(companyId: string, options: { force: boolean }) {
   const company = store.companies.get(companyId);
   if (!company) return { ok: false as const, httpStatus: 404 as const, error: "Project not found" };
-  const assistant = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "assistant");
-  if (!assistant) return { ok: false as const, httpStatus: 404 as const, error: "Assistant not found" };
+  const planner = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "planner");
+  const developer = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "developer");
+  if (!planner || !developer) return { ok: false as const, httpStatus: 404 as const, error: "Project agents not found" };
 
-  if (activeAssistantHeartbeats.has(assistant.id)) {
-    return { ok: true as const, heartbeat: null, engine: null, message: "Assistant heartbeat is already running." };
+  const activeSince = activeAssistantHeartbeats.get(companyId);
+  if (activeSince && Date.now() - activeSince < ACTIVE_HEARTBEAT_STALE_MS) {
+    return { ok: true as const, heartbeat: null, engine: null, message: "Project heartbeat is already running." };
   }
+  if (activeSince) activeAssistantHeartbeats.delete(companyId);
 
-  activeAssistantHeartbeats.add(assistant.id);
+  activeAssistantHeartbeats.set(companyId, Date.now());
   try {
     const hasActiveCard = [...store.cards.values()].some(
-      (card) => card.companyId === companyId && card.assigneeOrgNodeId === assistant.id && card.status === "in_progress"
+      (card) => card.companyId === companyId && card.assigneeOrgNodeId === developer.id && card.status === "in_progress"
     );
-    const runtimeBlockedCard = findRuntimeBlockedBossCard(companyId, assistant.id);
+    const runtimeBlockedCard = findRuntimeBlockedUserCard(companyId, developer.id);
     if (!hasActiveCard && runtimeBlockedCard) {
       return {
         ok: true as const,
         heartbeat: null,
         engine: null,
-        message: `Assistant runtime is waiting on Boss card "${runtimeBlockedCard.title}". Move it back to In progress when the runtime is available.`
+        message: `Kodeks runtime is waiting on "${runtimeBlockedCard.title}". Move it back to In progress when the runtime is available.`
       };
     }
 
-    const heartbeat = store.runHeartbeatForAgent(assistant.id, 1, { force: options.force });
-    const kickoff = findPlanningCard(companyId, assistant.id);
+    const kickoff = findPlanningCard(companyId, planner.id);
 
-    if (kickoff && kickoff.status !== "in_review" && kickoff.status !== "closed") {
+    if (kickoff && kickoff.status !== "waiting_supervisor" && kickoff.status !== "done") {
+      const heartbeat = store.runHeartbeatForAgent(planner.id, 1, { force: options.force });
       const engine = await runAssistantPlanCodex(companyId);
       if (!engine.ok) return { ok: false as const, httpStatus: engine.httpStatus, error: engine.error, heartbeat };
       return { ok: true as const, heartbeat, engine };
     }
 
-    const work = await executeAgentActiveCard(assistant.id);
+    const waitingForSupervisor = [...store.cards.values()].some(
+      (card) => card.companyId === companyId && card.status === "waiting_supervisor"
+    );
+    if (waitingForSupervisor) {
+      const supervisor = store.runSupervisorValidation(companyId, { force: options.force });
+      return { ok: true as const, heartbeat: supervisor.run, engine: null, supervisor };
+    }
+
+    const hasOpenDeveloperWork = [...store.cards.values()].some(
+      (card) => card.companyId === companyId && card.assigneeOrgNodeId === developer.id && card.status !== "done"
+    );
+    const hasOpenPlannerWork = [...store.cards.values()].some(
+      (card) => card.companyId === companyId && card.assigneeOrgNodeId === planner.id && card.status !== "done"
+    );
+    if (!hasOpenDeveloperWork && !hasOpenPlannerWork) {
+      createContinuationPlanningCard(companyId, planner.id);
+      const heartbeat = store.runHeartbeatForAgent(planner.id, 1, { force: options.force });
+      const engine = await runAssistantPlanCodex(companyId);
+      if (!engine.ok) return { ok: false as const, httpStatus: engine.httpStatus, error: engine.error, heartbeat };
+      return { ok: true as const, heartbeat, engine };
+    }
+
+    const heartbeat = store.runHeartbeatForAgent(developer.id, 1, { force: options.force });
+    const work = await executeAgentActiveCard(developer.id);
     return { ok: true as const, heartbeat, ...work };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Assistant heartbeat failed";
+    const msg = error instanceof Error ? error.message : "Project heartbeat failed";
     if (msg === "Agent heartbeat is not due yet") {
       return { ok: true as const, heartbeat: null, engine: null, message: msg };
     }
     return { ok: false as const, httpStatus: 409 as const, error: msg };
   } finally {
-    activeAssistantHeartbeats.delete(assistant.id);
+    activeAssistantHeartbeats.delete(companyId);
   }
 }
 
@@ -512,8 +582,9 @@ async function handleAssistantHeartbeat(req: express.Request, res: express.Respo
   res.json(out);
 }
 
+app.post("/api/companies/:companyId/planner/heartbeat", handleAssistantHeartbeat);
+app.post("/api/companies/:companyId/developer/heartbeat", handleAssistantHeartbeat);
 app.post("/api/companies/:companyId/assistant/heartbeat", handleAssistantHeartbeat);
-app.post("/api/companies/:companyId/ceo/heartbeat", handleAssistantHeartbeat);
 
 app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
   try {
@@ -522,7 +593,7 @@ app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
     const company = store.companies.get(agent.companyId);
     if (!company) return res.status(404).json({ error: "Company not found" });
 
-    if (agent.handle === "assistant") {
+    if (agent.handle === "planner" || agent.handle === "developer") {
       const out = await runAssistantHeartbeat(agent.companyId, { force: true });
       if (!out.ok) {
         res.status(out.httpStatus).json({ error: out.error });
@@ -622,14 +693,14 @@ app.patch("/api/cards/:cardId/status", (req, res) => {
   try {
     const existing = store.cards.get(req.params.cardId);
     if (!existing) return res.status(404).json({ error: "Card not found" });
-    if (parsed.data.status === "closed" && existing.status !== "closed" && !parsed.data.completionSummary?.trim()) {
+    if (parsed.data.status === "done" && existing.status !== "done" && !parsed.data.completionSummary?.trim()) {
       return res.status(400).json({ error: "Closing a task requires a completion summary." });
     }
     const card = store.updateCardStatus(req.params.cardId, parsed.data.status, parsed.data.completionSummary);
-    if (parsed.data.status === "in_progress" && existing.status === "boss" && card.assigneeOrgNodeId) {
+    if (parsed.data.status === "in_progress" && (existing.status === "waiting_user" || existing.status === "blocked") && card.assigneeOrgNodeId) {
       store.markAgentDueNow(card.assigneeOrgNodeId);
     }
-    if (parsed.data.status === "closed" && existing.status !== "closed" && parsed.data.completionSummary?.trim()) {
+    if (parsed.data.status === "done" && existing.status !== "done" && parsed.data.completionSummary?.trim()) {
       const company = store.companies.get(card.companyId);
       const assignee = card.assigneeOrgNodeId ? store.orgNodes.get(card.assigneeOrgNodeId) : null;
       store.createMessage({
@@ -652,34 +723,6 @@ app.post("/api/messages", (req, res) => {
   const message = store.createMessage(input);
   const actionCard = store.createActionCardFromMessage(message);
   res.status(201).json({ message, actionCard });
-});
-
-app.get("/api/skills/search", async (req, res) => {
-  const parsed = skillSearchSchema.safeParse(req.query);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid search query" });
-  const apiKey = process.env.SKILLSMP_API_KEY?.trim();
-  if (!apiKey) {
-    return res.status(501).json({
-      error: "SkillsMP is not configured. Set SKILLSMP_API_KEY in the API environment."
-    });
-  }
-
-  const url = new URL("https://skillsmp.com/api/v1/skills/search");
-  url.searchParams.set("q", parsed.data.q);
-  url.searchParams.set("limit", String(parsed.data.limit));
-
-  try {
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` }
-    });
-    const data = (await response.json()) as unknown;
-    if (!response.ok) {
-      return res.status(response.status).json({ error: "SkillsMP request failed", details: data });
-    }
-    res.json(data);
-  } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : "SkillsMP request failed" });
-  }
 });
 
 app.get("/api/inbox/:companyId/:handle", (req, res) => {

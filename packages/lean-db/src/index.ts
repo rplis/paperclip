@@ -4,6 +4,7 @@ import {
   type BoardCard,
   type BoardColumn,
   type ChannelMessage,
+  type CardPriority,
   type Company,
   type CompanySettings,
   type DailyReport,
@@ -11,17 +12,16 @@ import {
   type Goal,
   type HeartbeatRun,
   type OrgNode,
-  type CardStatus,
-  type Role
+  type CardStatus
 } from "@lean/shared";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  defaultAssistantMarkdownPack,
-  defaultCeoMarkdownPack,
-  defaultHireMarkdownPack,
-  defaultHiringManagerMarkdownPack,
+  defaultDeveloperMarkdownPack,
+  defaultPlannerMarkdownPack,
+  defaultRecoveryMarkdownPack,
+  defaultSupervisorMarkdownPack,
   mergeAgentPack
 } from "./agent-templates.js";
 
@@ -46,29 +46,14 @@ function cleanConversationBody(text: string) {
     .trim();
 }
 
-export type CeoPlanJson = {
-  hires?: Array<{
-    name?: string;
-    handle?: string;
-    role?: string;
-    reportsToHandle?: string | null;
-    skills?: string[];
-    agentMd?: string;
-    heartbeatMd?: string;
-    soulMd?: string;
-    toolsMd?: string;
-  }>;
-  cards?: Array<{
-    title?: string;
-    description?: string;
-    assigneeHandle?: string | null;
-  }>;
-};
-
 export type AssistantPlanJson = {
   cards?: Array<{
     title?: string;
     description?: string;
+    priority?: string;
+    dependencies?: string[];
+    risks?: string[];
+    requiredUserDecision?: string | null;
   }>;
 };
 
@@ -86,23 +71,19 @@ type LeanSnapshot = {
   runLogs: Array<[string, string[]]>;
 };
 
-function normalizePlanHandle(raw: string): string | null {
-  const s = raw.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 48);
-  return s.length > 0 ? s : null;
-}
-
-function normalizePlanRole(raw: string | undefined): Role {
-  const r = (raw ?? "custom").toLowerCase();
-  if (r === "ceo" || r === "cto" || r === "engineer" || r === "operator" || r === "hiring_manager" || r === "custom") return r;
-  return "custom";
-}
-
 function normalizeCardStatus(raw: string | undefined): CardStatus {
-  if (raw === "closed") return "closed";
+  if (raw === "done" || raw === "closed") return "done";
   if (raw === "in_progress") return "in_progress";
-  if (raw === "in_review") return "in_review";
-  if (raw === "boss") return "boss";
+  if (raw === "planned" || raw === "todo") return "planned";
+  if (raw === "waiting_supervisor" || raw === "in_review") return "waiting_supervisor";
+  if (raw === "waiting_user" || raw === "boss") return "waiting_user";
+  if (raw === "blocked") return "blocked";
   return "backlog";
+}
+
+function normalizeCardPriority(raw: string | undefined): CardPriority {
+  if (raw === "critical" || raw === "high" || raw === "low") return raw;
+  return "medium";
 }
 
 export class LeanStore {
@@ -184,8 +165,25 @@ export class LeanStore {
   }
 
   private applySnapshot(snapshot: Partial<LeanSnapshot>) {
-    for (const item of snapshot.companies ?? []) this.companies.set(item.id, item);
-    for (const item of snapshot.settings ?? []) this.settings.set(item.companyId, item);
+    for (const item of snapshot.companies ?? []) {
+      const goal = snapshot.goals?.find((g) => g.id === item.goalId);
+      this.companies.set(item.id, {
+        ...item,
+        memory: item.memory ?? {
+          objective: goal?.description ?? "",
+          strategicDecisions: [],
+          executionHistory: [],
+          failuresAndRetries: [],
+          supervisorEvaluations: []
+        }
+      });
+    }
+    for (const item of snapshot.settings ?? []) {
+      this.settings.set(item.companyId, {
+        ...item,
+        supervisorValidationRequired: item.supervisorValidationRequired ?? true
+      });
+    }
     for (const item of snapshot.goals ?? []) this.goals.set(item.id, item);
     for (const item of snapshot.orgNodes ?? []) this.orgNodes.set(item.id, item);
     for (const item of snapshot.columns ?? []) {
@@ -193,14 +191,116 @@ export class LeanStore {
       const status = normalizeCardStatus(rawStatus);
       this.columns.set(item.id, { ...item, status });
     }
-    for (const item of snapshot.cards ?? []) this.cards.set(item.id, { ...item, status: normalizeCardStatus(String(item.status)) });
+    for (const item of snapshot.cards ?? []) {
+      this.cards.set(item.id, {
+        ...item,
+        status: normalizeCardStatus(String(item.status)),
+        priority: normalizeCardPriority(String(item.priority)),
+        dependencies: item.dependencies ?? [],
+        risks: item.risks ?? [],
+        requiredUserDecision: item.requiredUserDecision ?? null
+      });
+    }
     for (const item of snapshot.messages ?? []) this.messages.set(item.id, item);
     for (const item of snapshot.escalations ?? []) this.escalations.set(item.id, item);
     for (const item of snapshot.heartbeatRuns ?? []) this.heartbeatRuns.set(item.id, item);
     for (const item of snapshot.dailyReports ?? []) this.dailyReports.set(item.id, item);
     for (const [key, value] of snapshot.runLogs ?? []) this.runLogs.set(key, value);
     this.sanitizeVisibleEngineNames();
-    for (const company of this.companies.values()) this.ensureBoardColumns(company.id);
+    for (const company of this.companies.values()) {
+      if (company.operatorHandle !== "boss") this.companies.set(company.id, { ...company, operatorHandle: "boss" });
+      this.ensureBoardColumns(company.id);
+      this.ensureProjectAgentTeam(this.companies.get(company.id) ?? company);
+    }
+  }
+
+  private ensureProjectAgentTeam(company: Company) {
+    const allowedRoles = new Set(["supervisor", "planner", "developer", "recovery", "operator", "custom"]);
+    const before = [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
+    const legacyIds = new Set(before.filter((node) => !allowedRoles.has(node.role) || ["assistant", "ceo", "hiring"].includes(node.handle)).map((node) => node.id));
+    for (const id of legacyIds) this.orgNodes.delete(id);
+
+    const existing = () => [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
+    const makeNode = (
+      role: "supervisor" | "planner" | "developer" | "recovery",
+      name: string,
+      handle: string,
+      reportsToId: string | null,
+      subtreeSkillsManifest: string[],
+      files: AgentMarkdownPack
+    ): OrgNode => {
+      const current = existing().find((node) => node.handle === handle || node.role === role);
+      if (current) {
+        const next = {
+          ...current,
+          name,
+          handle,
+          role,
+          reportsToId,
+          subtreeSkillsManifest,
+          files
+        };
+        this.orgNodes.set(current.id, next);
+        return next;
+      }
+      const node: OrgNode = {
+        id: uid(),
+        companyId: company.id,
+        name,
+        handle,
+        role,
+        reportsToId,
+        subtreeSkillsManifest,
+        files,
+        lastHeartbeatAt: null
+      };
+      this.orgNodes.set(node.id, node);
+      return node;
+    };
+
+    const supervisor = makeNode(
+      "supervisor",
+      "Supervisor Agent",
+      "supervisor",
+      null,
+      ["strategic-alignment", "risk-review", "approval-gates"],
+      defaultSupervisorMarkdownPack(company.name)
+    );
+    const planner = makeNode(
+      "planner",
+      "Planning Agent",
+      "planner",
+      supervisor.id,
+      ["milestones", "dependencies", "prioritization", "replanning"],
+      defaultPlannerMarkdownPack(company.name)
+    );
+    const developer = makeNode(
+      "developer",
+      "Developer Agent",
+      "developer",
+      supervisor.id,
+      ["task-execution", "deliverables", "implementation-plans"],
+      defaultDeveloperMarkdownPack(company.name)
+    );
+    makeNode(
+      "recovery",
+      "Heartbeat / Recovery Agent",
+      "recovery",
+      supervisor.id,
+      ["stalled-execution-detection", "continuity", "retry-recovery"],
+      defaultRecoveryMarkdownPack(company.name)
+    );
+
+    for (const [id, card] of this.cards) {
+      if (card.companyId !== company.id) continue;
+      const shouldReassign = card.assigneeOrgNodeId == null || legacyIds.has(card.assigneeOrgNodeId) || !this.orgNodes.has(card.assigneeOrgNodeId);
+      const isPlanningCard = card.title.includes("Create the project plan") || card.title.includes("Generate autonomous project plan");
+      this.cards.set(id, {
+        ...card,
+        title: card.title.includes("Create the project plan") ? "Generate autonomous project plan" : card.title,
+        assigneeOrgNodeId: shouldReassign ? (isPlanningCard ? planner.id : developer.id) : card.assigneeOrgNodeId
+      });
+    }
   }
 
   private sanitizeVisibleEngineNames() {
@@ -222,7 +322,12 @@ export class LeanStore {
         .replace(/write a direct message in `dm-assistant-boss` and leave the task in progress with the blocker stated\./g, "write a direct message in `dm-assistant-boss` and move the task to Boss with the blocker stated.")
         .replace(/If blocked by missing human input, DM @boss in `dm-assistant-boss` with a precise question\./g, "If blocked by missing human input, DM @boss in `dm-assistant-boss` with a precise question and move the card to Boss.")
         .replace(/This card is already In review and waiting on you\./g, "This now needs a delegated follow-up task if action is still required.")
-        .replace(/card\(s\) are In review—ping @boss in this thread or #general if you need a decision so work can keep moving\./g, "card(s) were waiting for review. Create explicit follow-up tasks for whoever owns the next action.");
+        .replace(/card\(s\) are In review—ping @boss in this thread or #general if you need a decision so work can keep moving\./g, "card(s) were waiting for review. Create explicit follow-up tasks for whoever owns the next action.")
+        .replace(/\bBoss\b/g, "Waiting for Boss")
+        .replace(/\bReview\b/g, "Waiting for Supervisor")
+        .replace(/\bClosed\b/g, "Done")
+        .replace(/\bAssistant\b/g, "Developer Agent")
+        .replace(/\bassistant\b/g, "developer");
 
     for (const [id, card] of this.cards) {
       this.cards.set(id, { ...card, title: clean(card.title), description: clean(card.description) });
@@ -253,7 +358,14 @@ export class LeanStore {
       id: companyId,
       name: input.name,
       goalId,
-      operatorHandle: "boss"
+      operatorHandle: "boss",
+      memory: {
+        objective: input.goalDescription,
+        strategicDecisions: [],
+        executionHistory: ["Project initialized from a high-level business objective."],
+        failuresAndRetries: [],
+        supervisorEvaluations: []
+      }
     };
     const goal: Goal = {
       id: goalId,
@@ -266,34 +378,71 @@ export class LeanStore {
       companyId: company.id,
       heartbeatIntervalMinutes: 10,
       dailyReportTime: "09:00",
-      skillsmpEnabled: false
+      supervisorValidationRequired: true
     });
     this.goals.set(goal.id, goal);
     this.seedBoard(companyId);
-    const { assistant, kickoff } = this.bootstrapAssistant(company, goal);
+    const { developer, kickoff } = this.bootstrapProjectAgents(company, goal);
     this.persist();
-    return { company, goal, kickoffCardId: kickoff.id, assistantId: assistant.id };
+    return { company, goal, kickoffCardId: kickoff.id, assistantId: developer.id };
   }
 
-  private bootstrapAssistant(company: Company, goal: Goal): { assistant: OrgNode; kickoff: BoardCard } {
-    const assistant = this.createOrgNode({
+  private bootstrapProjectAgents(company: Company, goal: Goal): { developer: OrgNode; kickoff: BoardCard } {
+    const supervisor = this.createOrgNode({
       actorOrgNodeId: null,
       companyId: company.id,
-      name: "Assistant",
-      handle: "assistant",
-      role: "assistant",
+      name: "Supervisor Agent",
+      handle: "supervisor",
+      role: "supervisor",
       reportsToId: null,
-      subtreeSkillsManifest: ["project-management", "planning", "execution"],
-      ...defaultAssistantMarkdownPack(company.name)
+      subtreeSkillsManifest: ["strategic-alignment", "risk-review", "approval-gates"],
+      ...defaultSupervisorMarkdownPack(company.name)
+    });
+
+    const planner = this.createOrgNode({
+      actorOrgNodeId: supervisor.id,
+      companyId: company.id,
+      name: "Planning Agent",
+      handle: "planner",
+      role: "planner",
+      reportsToId: supervisor.id,
+      subtreeSkillsManifest: ["milestones", "dependencies", "prioritization", "replanning"],
+      ...defaultPlannerMarkdownPack(company.name)
+    });
+
+    const developer = this.createOrgNode({
+      actorOrgNodeId: supervisor.id,
+      companyId: company.id,
+      name: "Developer Agent",
+      handle: "developer",
+      role: "developer",
+      reportsToId: supervisor.id,
+      subtreeSkillsManifest: ["task-execution", "deliverables", "implementation-plans"],
+      ...defaultDeveloperMarkdownPack(company.name)
+    });
+
+    this.createOrgNode({
+      actorOrgNodeId: supervisor.id,
+      companyId: company.id,
+      name: "Heartbeat / Recovery Agent",
+      handle: "recovery",
+      role: "recovery",
+      reportsToId: supervisor.id,
+      subtreeSkillsManifest: ["stalled-execution-detection", "continuity", "retry-recovery"],
+      ...defaultRecoveryMarkdownPack(company.name)
     });
 
     const kickoff = this.createCard({
       companyId: company.id,
-      title: "Create the project plan",
+      title: "Generate autonomous project plan",
       description:
-        "Read the project goal, produce a detailed plan, and publish it as Backlog cards. Each card must be small enough to complete in about five minutes. Ask @boss in DM if the goal lacks a required decision.",
-      assigneeOrgNodeId: assistant.id,
-      goalId: goal.id
+        "Analyze the project goal and generate milestones, tasks, subtasks, dependencies, priorities, execution order, required boss decisions, and risks. Publish the result onto the Kanban board.",
+      priority: "critical",
+      assigneeOrgNodeId: planner.id,
+      goalId: goal.id,
+      dependencies: [],
+      risks: ["Planning quality determines execution quality."],
+      requiredUserDecision: null
     });
     this.updateCardStatus(kickoff.id, "in_progress");
 
@@ -302,128 +451,21 @@ export class LeanStore {
       threadId: "general",
       authorType: "system",
       authorId: null,
-      body: "Project created. The Assistant is the only AI agent and has started drafting the plan into Backlog.",
+      body: "Project created. Supervisor, Planning, Developer, and Recovery agents are active. Planning has started and will place work on the Kanban board.",
       linkedCardId: kickoff.id
     });
     this.createMessage({
       companyId: company.id,
-      threadId: dmThreadId(assistant.handle, company.operatorHandle),
+      threadId: dmThreadId(planner.handle, company.operatorHandle),
       authorType: "agent",
-      authorId: assistant.id,
+      authorId: planner.id,
       body:
         goal.description.trim().length < 30
           ? "@boss I need a little more goal detail before I can produce a useful plan. What outcome should this project reach, and what constraints matter?"
-          : "I will turn the goal into small Backlog tasks, then work them one at a time. Anything that needs your decision will come here as a direct question.",
+          : "I will turn the goal into milestones and executable tasks. Anything that needs your decision will be moved to Waiting for Boss with a direct question.",
       linkedCardId: kickoff.id
     });
-    return { assistant, kickoff };
-  }
-
-  private bootstrapCeo(company: Company, goal: Goal): { ceo: OrgNode; kickoff: BoardCard } {
-    const ceo = this.createOrgNode({
-      actorOrgNodeId: null,
-      companyId: company.id,
-      name: "CEO",
-      handle: "ceo",
-      role: "ceo",
-      reportsToId: null,
-      subtreeSkillsManifest: ["strategy", "delegation"]
-    });
-
-    const hiring = this.createOrgNode({
-      actorOrgNodeId: ceo.id,
-      companyId: company.id,
-      name: "Hiring Manager",
-      handle: "hiring",
-      role: "hiring_manager",
-      reportsToId: ceo.id,
-      subtreeSkillsManifest: ["hiring-intake", "skillsmp-search", "candidate-proposals", "boss-approval"],
-      ...defaultHiringManagerMarkdownPack(company.name)
-    });
-
-    const kickoff = this.createCard({
-      companyId: company.id,
-      title: "Define company structure and hire team",
-      description:
-        "Complete the five checklist cards on the Board (Backlog, assigned to you)—each is a separate task. When reporting lines, roles, and manifests are clear, close this card and return a structured plan so the app can add hires and delegated cards. If the goal is ambiguous, create a task assigned to @boss or ask in Messages before proceeding.",
-      assigneeOrgNodeId: ceo.id,
-      goalId: goal.id
-    });
-    this.updateCardStatus(kickoff.id, "in_progress");
-
-    const checklist: Array<{ title: string; description: string }> = [
-      {
-        title: "Map reporting lines under the CEO",
-        description: "Document the org tree from the CEO down so hiring and delegation stay consistent."
-      },
-      {
-        title: "Define first hiring requests for @hiring",
-        description: "For each needed person, define requester, reporting manager, outcomes, required skills, nice-to-have skills, urgency, and acceptance criteria."
-      },
-      {
-        title: "Attach a skills manifest for each subtree team",
-        description: "For each branch under a manager, list the skills or capabilities that subtree owns."
-      },
-      {
-        title: "Route hires through Hiring Manager",
-        description: "Hiring Manager owns SkillsMP search, proposal, boss review, and final employee creation after the requester defines the need."
-      },
-      {
-        title: "If the goal is ambiguous, ask @boss before committing the org plan",
-        description: "Use Messages (DM with @boss or #general) before locking structure if anything about the goal is unclear."
-      }
-    ];
-    for (const item of checklist) {
-      this.createCard({
-        companyId: company.id,
-        title: item.title,
-        description: item.description,
-        assigneeOrgNodeId: ceo.id,
-        goalId: goal.id
-      });
-    }
-
-    this.createMessage({
-      companyId: company.id,
-      threadId: "general",
-      authorType: "system",
-      authorId: null,
-      body: "CEO and Hiring Manager are hired. The kickoff card is In progress and five checklist tasks were added to Backlog. Hiring requests should go to @hiring with role needs, skills, reporting line, urgency, and acceptance criteria. @boss reviews hiring proposals before final hire creation.",
-      linkedCardId: kickoff.id
-    });
-
-    this.createMessage({
-      companyId: company.id,
-      threadId: dmThreadId(hiring.handle, company.operatorHandle),
-      authorType: "system",
-      authorId: null,
-      body: "Direct thread @boss ↔ @hiring is open. @hiring owns hiring intake, SkillsMP-backed search, proposal, boss review, and final approved hire creation.",
-      linkedCardId: null
-    });
-
-    const ceoDm = dmThreadId(ceo.handle, company.operatorHandle);
-    const goalNeedsClarification = goal.description.trim().length < 40;
-    if (goalNeedsClarification) {
-      this.createMessage({
-        companyId: company.id,
-        threadId: ceoDm,
-        authorType: "agent",
-        authorId: ceo.id,
-        body: "@boss I am not certain we have enough goal detail to lock an org structure. Please clarify: who is the customer, timeline or deadline, and what counts as success (metric or milestone). Once you reply, I will unblock hiring and structure work.",
-        linkedCardId: kickoff.id
-      });
-      return { ceo, kickoff };
-    }
-
-    this.createMessage({
-      companyId: company.id,
-      threadId: ceoDm,
-      authorType: "agent",
-      authorId: ceo.id,
-        body: "Goal looks clear enough to draft the org chart and hiring sequence. I will work through the checklist cards on the Board first, then send hiring requests to @hiring rather than creating hires directly. If I hit ambiguity I will @boss in #general before proceeding.",
-      linkedCardId: kickoff.id
-    });
-    return { ceo, kickoff };
+    return { developer, kickoff };
   }
 
   private seedBoard(companyId: string) {
@@ -433,10 +475,12 @@ export class LeanStore {
   private ensureBoardColumns(companyId: string) {
     const defs: Array<{ title: string; status: CardStatus }> = [
       { title: "Backlog", status: "backlog" },
+      { title: "Planned", status: "planned" },
       { title: "In progress", status: "in_progress" },
-      { title: "Boss", status: "boss" },
-      { title: "Review", status: "in_review" },
-      { title: "Closed", status: "closed" }
+      { title: "Waiting for Supervisor", status: "waiting_supervisor" },
+      { title: "Waiting for Boss", status: "waiting_user" },
+      { title: "Blocked", status: "blocked" },
+      { title: "Done", status: "done" }
     ];
     defs.forEach((d, index) => {
       const existing = [...this.columns.values()].find((col) => col.companyId === companyId && col.status === d.status);
@@ -468,22 +512,23 @@ export class LeanStore {
       const manager = this.orgNodes.get(input.reportsToId);
       if (!manager) throw new Error("Manager not found");
       const actor = input.actorOrgNodeId ? this.orgNodes.get(input.actorOrgNodeId) : null;
-      const actorCanHireForManager =
-        actor?.companyId === manager.companyId && actor.role === "hiring_manager";
-      if (input.actorOrgNodeId !== manager.id && !actorCanHireForManager) {
-        throw new Error("Only the direct manager or Hiring Manager can create this subordinate");
+      const actorCanCoordinate = actor?.companyId === manager.companyId && actor.role === "supervisor";
+      if (input.actorOrgNodeId !== manager.id && !actorCanCoordinate) {
+        throw new Error("Only the direct manager or Supervisor Agent can create this subordinate");
       }
     }
     const companyName = this.companies.get(input.companyId)?.name ?? "Company";
     const manager = input.reportsToId ? this.orgNodes.get(input.reportsToId) : null;
-    const managerHandle = manager?.handle ?? "ceo";
+    const managerHandle = manager?.handle ?? "supervisor";
     const handleLc = input.handle.toLowerCase();
     const baseFiles: AgentMarkdownPack =
-      input.role === "assistant"
-        ? defaultAssistantMarkdownPack(companyName)
-        : input.role === "ceo" && (input.reportsToId === null || input.reportsToId === undefined)
-          ? defaultCeoMarkdownPack(companyName)
-          : defaultHireMarkdownPack(companyName, input.role, input.name, handleLc, managerHandle);
+      input.role === "supervisor"
+        ? defaultSupervisorMarkdownPack(companyName)
+        : input.role === "planner"
+          ? defaultPlannerMarkdownPack(companyName)
+          : input.role === "recovery"
+            ? defaultRecoveryMarkdownPack(companyName)
+            : defaultDeveloperMarkdownPack(companyName, input.name, handleLc, managerHandle);
     const files = mergeAgentPack(baseFiles, {
       agentMd: input.agentMd,
       heartbeatMd: input.heartbeatMd,
@@ -513,7 +558,7 @@ export class LeanStore {
       companyId,
       heartbeatIntervalMinutes: 10,
       dailyReportTime: "09:00",
-      skillsmpEnabled: false
+      supervisorValidationRequired: true
     };
     this.settings.set(companyId, fallback);
     return fallback;
@@ -526,7 +571,7 @@ export class LeanStore {
       ...current,
       heartbeatIntervalMinutes: patch.heartbeatIntervalMinutes ?? current.heartbeatIntervalMinutes,
       dailyReportTime: patch.dailyReportTime ?? current.dailyReportTime,
-      skillsmpEnabled: patch.skillsmpEnabled ?? current.skillsmpEnabled
+      supervisorValidationRequired: patch.supervisorValidationRequired ?? current.supervisorValidationRequired
     };
     this.settings.set(companyId, next);
     this.persist();
@@ -545,8 +590,20 @@ export class LeanStore {
     return next;
   }
 
-  createCard(input: Omit<BoardCard, "id" | "status" | "completionSummary">) {
-    const card: BoardCard = { id: uid(), ...input, status: "backlog", completionSummary: null };
+  createCard(
+    input: Omit<BoardCard, "id" | "status" | "completionSummary" | "priority" | "dependencies" | "risks" | "requiredUserDecision"> &
+      Partial<Pick<BoardCard, "priority" | "dependencies" | "risks" | "requiredUserDecision">>
+  ) {
+    const card: BoardCard = {
+      id: uid(),
+      ...input,
+      priority: input.priority ?? "medium",
+      dependencies: input.dependencies ?? [],
+      risks: input.risks ?? [],
+      requiredUserDecision: input.requiredUserDecision ?? null,
+      status: "backlog",
+      completionSummary: null
+    };
     this.cards.set(card.id, card);
     this.persist();
     return card;
@@ -559,7 +616,7 @@ export class LeanStore {
       ...card,
       status,
       completionSummary:
-        status === "closed" || status === "in_review" || status === "boss"
+        status === "done" || status === "waiting_supervisor" || status === "waiting_user" || status === "blocked"
           ? completionSummary?.trim() || card.completionSummary || null
           : card.completionSummary ?? null
     };
@@ -591,130 +648,22 @@ export class LeanStore {
     return message;
   }
 
-  ensureHiringManager(companyId: string): OrgNode | null {
-    const company = this.companies.get(companyId);
-    return company ? this.ensureHiringManagerForCompany(company) : null;
-  }
-
-  private ensureHiringManagerForCompany(company: Company): OrgNode | null {
-    const existing = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "hiring");
-    if (existing) {
-      this.syncHiringProcessForCompany(company, existing);
-      return existing;
-    }
-    const ceo = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "ceo");
-    if (!ceo) return null;
-    const hiring = this.createOrgNode({
-      actorOrgNodeId: ceo.id,
-      companyId: company.id,
-      name: "Hiring Manager",
-      handle: "hiring",
-      role: "hiring_manager",
-      reportsToId: ceo.id,
-      subtreeSkillsManifest: ["hiring-intake", "skillsmp-search", "candidate-proposals", "boss-approval"],
-      ...defaultHiringManagerMarkdownPack(company.name)
-    });
-    this.syncHiringProcessForCompany(company, hiring);
-    return hiring;
-  }
-
-  private syncHiringProcessForCompany(company: Company, hiring: OrgNode) {
-    let changed = false;
-    const ceo = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "ceo");
-    if (ceo) {
-      const needsCeoFiles =
-        !ceo.files.agentMd.includes("@hiring") ||
-        !ceo.files.heartbeatMd.includes("@hiring") ||
-        !ceo.files.toolsMd.includes("@hiring") ||
-        ceo.files.agentMd.includes("in_review") ||
-        ceo.files.heartbeatMd.includes("in_review") ||
-        ceo.files.toolsMd.includes("in_review");
-      const nextSkills = ceo.subtreeSkillsManifest.includes("hiring")
-        ? ceo.subtreeSkillsManifest.filter((skill) => skill !== "hiring")
-        : ceo.subtreeSkillsManifest;
-      if (needsCeoFiles || nextSkills.length !== ceo.subtreeSkillsManifest.length) {
-        this.orgNodes.set(ceo.id, {
-          ...ceo,
-          subtreeSkillsManifest: nextSkills.length > 0 ? nextSkills : ["strategy", "delegation"],
-          files: needsCeoFiles ? defaultCeoMarkdownPack(company.name) : ceo.files
-        });
-        changed = true;
-      }
-    }
-    if (
-      hiring.files.agentMd.includes("In review") ||
-      hiring.files.heartbeatMd.includes("In review") ||
-      hiring.files.toolsMd.includes("in_review")
-    ) {
-      this.orgNodes.set(hiring.id, { ...hiring, files: defaultHiringManagerMarkdownPack(company.name) });
-      changed = true;
-    }
-
-    const cardUpdates = new Map<string, { title: string; description: string }>([
-      [
-        "Decide first roles to hire (e.g. CTO, leads)",
-        {
-          title: "Define first hiring requests for @hiring",
-          description:
-            "For each needed person, define requester, reporting manager, outcomes, required skills, nice-to-have skills, urgency, and acceptance criteria."
-        }
-      ],
-      [
-        "Create hires only after structure is clear",
-        {
-          title: "Route hires through Hiring Manager",
-          description:
-            "Hiring Manager owns SkillsMP search, proposal, boss review, and final employee creation after the requester defines the need."
-        }
-      ]
-    ]);
-    for (const [id, card] of this.cards) {
-      if (card.companyId !== company.id) continue;
-      const update = cardUpdates.get(card.title);
-      if (!update) continue;
-      this.cards.set(id, { ...card, ...update });
-      changed = true;
-    }
-
-    const hiringThreadId = dmThreadId(hiring.handle, company.operatorHandle);
-    const hasHiringThreadIntro = [...this.messages.values()].some(
-      (m) => m.companyId === company.id && m.threadId === hiringThreadId && m.body.includes("@hiring owns hiring intake")
-    );
-    if (!hasHiringThreadIntro) {
-      const messageId = uid();
-      this.messages.set(messageId, {
-        id: messageId,
-        createdAt: new Date().toISOString(),
-        mentions: ["hiring"],
-        companyId: company.id,
-        threadId: hiringThreadId,
-        authorType: "system",
-        authorId: null,
-        body: "Direct thread @boss ↔ @hiring is open. @hiring owns hiring intake, SkillsMP-backed search, proposal, boss review, and final approved hire creation.",
-        linkedCardId: null
-      });
-      changed = true;
-    }
-
-    if (changed) this.persist();
-  }
-
   createActionCardFromMessage(message: ChannelMessage): BoardCard | null {
     if (message.authorType === "system") return null;
     if (message.linkedCardId) return null;
     const company = this.companies.get(message.companyId);
     if (!company) return null;
-    const assistant = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "assistant");
+    const developer = [...this.orgNodes.values()].find((n) => n.companyId === company.id && n.handle === "developer");
     const body = message.body.trim();
     if (!body) return null;
 
-    if (message.authorType !== "user" || !assistant) return null;
-    if (message.threadId !== dmThreadId(company.operatorHandle, assistant.handle)) return null;
+    if (message.authorType !== "user" || !developer) return null;
+    if (message.threadId !== dmThreadId(company.operatorHandle, developer.handle)) return null;
     return this.createCard({
       companyId: company.id,
-      title: `Assistant action: ${body.slice(0, 80)}${body.length > 80 ? "..." : ""}`,
-      description: `Boss message from ${new Date(message.createdAt).toLocaleString()}:\n\n${body}\n\nExpected assistant action: decide whether this needs a reply, a board card, or a concrete next step. Keep the task about five minutes.`,
-      assigneeOrgNodeId: assistant.id,
+      title: `Boss follow-up: ${body.slice(0, 80)}${body.length > 80 ? "..." : ""}`,
+      description: `Boss message from ${new Date(message.createdAt).toLocaleString()}:\n\n${body}\n\nExpected action: decide whether this needs a reply, a board card, or a concrete next step.`,
+      assigneeOrgNodeId: developer.id,
       goalId: company.goalId
     });
   }
@@ -783,130 +732,15 @@ export class LeanStore {
     return escalation;
   }
 
-  extractCeoPlanJsonFromLog(logLines: string[]): CeoPlanJson | null {
-    const text = logLines.join("\n");
-    const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
-    for (const match of matches.reverse()) {
-      if (!match[1]) continue;
-      try {
-        const parsed: unknown = JSON.parse(match[1].trim());
-        if (!parsed || typeof parsed !== "object") continue;
-        const record = parsed as Record<string, unknown>;
-        const hires = Array.isArray(record.hires) ? record.hires : [];
-        const cards = Array.isArray(record.cards) ? record.cards : [];
-        if (!Array.isArray(record.hires) && !Array.isArray(record.cards)) continue;
-        return { hires: hires as CeoPlanJson["hires"], cards: cards as CeoPlanJson["cards"] };
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }
-
-  applyCeoPlanJson(companyId: string, ceoId: string, plan: CeoPlanJson): {
-    createdHires: number;
-    createdCards: number;
-    errors: string[];
-  } {
-    const errors: string[] = [];
-    let createdHires = 0;
-    let createdCards = 0;
-    const ceo = this.orgNodes.get(ceoId);
-    if (!ceo || ceo.companyId !== companyId) {
-      errors.push("CEO invalid for company");
-      return { createdHires, createdCards, errors };
-    }
-
-    const handleToId = new Map<string, string>();
-    for (const node of this.orgNodes.values()) {
-      if (node.companyId === companyId) handleToId.set(node.handle, node.id);
-    }
-
-    const goal = [...this.goals.values()].find((g) => g.companyId === companyId) ?? null;
-
-    for (const hire of (plan.hires ?? []).slice(0, 14)) {
-      const handle = normalizePlanHandle(String(hire?.handle ?? ""));
-      if (!handle) {
-        errors.push("skip hire: missing or invalid handle");
-        continue;
-      }
-      if (handleToId.has(handle)) {
-        errors.push(`skip @${handle}: duplicate handle`);
-        continue;
-      }
-      const managerHandle = normalizePlanHandle(String(hire?.reportsToHandle ?? "ceo")) ?? "ceo";
-      const managerId = handleToId.get(managerHandle);
-      if (!managerId) {
-        errors.push(`skip @${handle}: unknown reportsToHandle @${managerHandle}`);
-        continue;
-      }
-      const manager = this.orgNodes.get(managerId);
-      if (!manager) {
-        errors.push(`skip @${handle}: manager not found`);
-        continue;
-      }
-      const hiringManager = [...this.orgNodes.values()].find(
-        (node) => node.companyId === companyId && node.role === "hiring_manager"
-      );
-      try {
-        const node = this.createOrgNode({
-          actorOrgNodeId: hiringManager?.id ?? manager.id,
-          companyId,
-          name: String(hire?.name ?? "").trim() || handle,
-          handle,
-          role: normalizePlanRole(hire?.role),
-          reportsToId: managerId,
-          subtreeSkillsManifest: Array.isArray(hire?.skills)
-            ? hire.skills.map((s) => String(s)).filter(Boolean).slice(0, 32)
-            : [],
-          agentMd: typeof hire?.agentMd === "string" ? hire.agentMd : undefined,
-          heartbeatMd: typeof hire?.heartbeatMd === "string" ? hire.heartbeatMd : undefined,
-          soulMd: typeof hire?.soulMd === "string" ? hire.soulMd : undefined,
-          toolsMd: typeof hire?.toolsMd === "string" ? hire.toolsMd : undefined
-        });
-        handleToId.set(handle, node.id);
-        createdHires += 1;
-        const op = this.companies.get(companyId)?.operatorHandle ?? "boss";
-        this.createMessage({
-          companyId,
-          threadId: dmThreadId(handle, op),
-          authorType: "system",
-          authorId: null,
-          body: `Direct thread @${op} ↔ @${handle} is open — use Messages to coordinate with @${handle}.`,
-          linkedCardId: null
-        });
-      } catch (err) {
-        errors.push(`hire @${handle}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    for (const card of (plan.cards ?? []).slice(0, 18)) {
-      const title = String(card?.title ?? "").trim();
-      if (!title) continue;
-      const assigneeHandleRaw = card?.assigneeHandle != null ? String(card.assigneeHandle).trim() : "";
-      const assigneeHandle = assigneeHandleRaw ? normalizePlanHandle(assigneeHandleRaw) : null;
-      const assigneeOrgNodeId = assigneeHandle ? handleToId.get(assigneeHandle) ?? null : null;
-      this.createCard({
-        companyId,
-        title: title.slice(0, 240),
-        description: String(card?.description ?? "").slice(0, 12000),
-        assigneeOrgNodeId,
-        goalId: goal?.id ?? null
-      });
-      createdCards += 1;
-    }
-
-    this.persist();
-    return { createdHires, createdCards, errors };
-  }
-
   extractAssistantPlanJsonFromLog(logLines: string[]): AssistantPlanJson | null {
-    const text = logLines.join("\n");
+    const text = logLines
+      .filter((line) => !line.startsWith("[stderr]") && !line.startsWith("$ ") && !line.startsWith("[stdin]") && !line.startsWith("process_exit="))
+      .join("\n");
     const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
     for (const match of matches.reverse()) {
       if (!match[1]) continue;
       try {
-        const parsed: unknown = JSON.parse(match[1].trim());
+        const parsed: unknown = JSON.parse(match[1].trim().replace(/[\r\n]+/g, " "));
         if (!parsed || typeof parsed !== "object") continue;
         const record = parsed as Record<string, unknown>;
         const cards = Array.isArray(record.cards) ? record.cards : [];
@@ -925,11 +759,12 @@ export class LeanStore {
   } {
     const errors: string[] = [];
     let createdCards = 0;
-    const assistant = this.orgNodes.get(assistantId);
-    if (!assistant || assistant.companyId !== companyId) {
-      errors.push("Assistant invalid for project");
+    const planner = this.orgNodes.get(assistantId);
+    if (!planner || planner.companyId !== companyId) {
+      errors.push("Planning Agent invalid for project");
       return { createdCards, errors };
     }
+    const developer = [...this.orgNodes.values()].find((node) => node.companyId === companyId && node.role === "developer") ?? planner;
     const goal = [...this.goals.values()].find((g) => g.companyId === companyId) ?? null;
     const existingTitles = new Set(
       [...this.cards.values()]
@@ -940,11 +775,16 @@ export class LeanStore {
     for (const card of (plan.cards ?? []).slice(0, 24)) {
       const title = String(card?.title ?? "").trim();
       if (!title) continue;
+      if (title.toLowerCase().startsWith("example planning card")) {
+        errors.push(`skip example card: ${title}`);
+        continue;
+      }
       if (existingTitles.has(title.toLowerCase())) {
         errors.push(`skip duplicate card: ${title}`);
         continue;
       }
-      this.createCard({
+      const requiredUserDecision = card?.requiredUserDecision ? String(card.requiredUserDecision).trim() : null;
+      const created = this.createCard({
         companyId,
         title: title.slice(0, 140),
         description: [
@@ -955,9 +795,16 @@ export class LeanStore {
           .join("\n")
           .trim()
           .slice(0, 12000),
-        assigneeOrgNodeId: assistant.id,
-        goalId: goal?.id ?? null
+        priority: normalizeCardPriority(String(card?.priority ?? "medium")),
+        assigneeOrgNodeId: developer.id,
+        goalId: goal?.id ?? null,
+        dependencies: Array.isArray(card?.dependencies) ? card.dependencies.map((d) => String(d)).filter(Boolean).slice(0, 8) : [],
+        risks: Array.isArray(card?.risks) ? card.risks.map((r) => String(r)).filter(Boolean).slice(0, 8) : [],
+        requiredUserDecision
       });
+      if (requiredUserDecision) {
+        this.updateCardStatus(created.id, "waiting_user", requiredUserDecision);
+      }
       existingTitles.add(title.toLowerCase());
       createdCards += 1;
     }
@@ -1007,7 +854,7 @@ export class LeanStore {
       if (mine?.length) {
         const openSlots = Math.max(0, wipPerAssignee - mine.filter((c) => c.status === "in_progress").length);
         const backlog = mine
-          .filter((c) => c.status === "backlog")
+          .filter((c) => c.status === "backlog" || c.status === "planned")
           .sort((a, b) => a.title.localeCompare(b.title))
           .slice(0, openSlots);
         for (const next of backlog) {
@@ -1030,8 +877,8 @@ export class LeanStore {
         promotedCardIds: promotedForNode,
         summary:
           promotedForNode.length > 0
-            ? `Promoted ${promotedForNode.length} backlog card(s) to In progress.`
-            : "Heartbeat completed; no backlog card needed promotion."
+            ? `Promoted ${promotedForNode.length} ready card(s) to In progress.`
+            : "Heartbeat completed; no ready card needed promotion."
       };
       this.heartbeatRuns.set(run.id, run);
       runs.push(run);
@@ -1066,7 +913,7 @@ export class LeanStore {
 
     const openSlots = Math.max(0, wipPerAssignee - mine.filter((c) => c.status === "in_progress").length);
     const backlog = mine
-      .filter((c) => c.status === "backlog")
+      .filter((c) => c.status === "backlog" || c.status === "planned")
       .sort((a, b) => a.title.localeCompare(b.title))
       .slice(0, openSlots);
     for (const next of backlog) {
@@ -1087,18 +934,77 @@ export class LeanStore {
       promotedCardIds: promotedForNode,
       summary:
         promotedForNode.length > 0
-          ? `Promoted ${promotedForNode.length} backlog card(s) to In progress.`
-          : "Heartbeat completed; no backlog card needed promotion."
+          ? `Promoted ${promotedForNode.length} ready card(s) to In progress.`
+          : "Heartbeat completed; no ready card needed promotion."
     };
     this.heartbeatRuns.set(run.id, run);
     this.persist();
     return { promoted, run };
   }
 
+  runSupervisorValidation(companyId: string, options: { force?: boolean } = {}): { run: HeartbeatRun; validatedCardIds: string[] } {
+    const company = this.companies.get(companyId);
+    if (!company) throw new Error("Company not found");
+    const supervisor = [...this.orgNodes.values()].find((node) => node.companyId === companyId && node.handle === "supervisor");
+    if (!supervisor) throw new Error("Supervisor Agent not found");
+
+    const settings = this.getCompanySettings(companyId);
+    const intervalMs = settings.heartbeatIntervalMinutes * 60_000;
+    const lastMs = supervisor.lastHeartbeatAt ? Date.parse(supervisor.lastHeartbeatAt) : 0;
+    const nowMs = Date.now();
+    if (!options.force && Number.isFinite(lastMs) && lastMs > 0 && nowMs - lastMs < intervalMs) {
+      throw new Error("Agent heartbeat is not due yet");
+    }
+
+    const startedAt = new Date().toISOString();
+    const waiting = [...this.cards.values()]
+      .filter((card) => card.companyId === companyId && card.status === "waiting_supervisor")
+      .sort((a, b) => a.title.localeCompare(b.title));
+    const validatedCardIds: string[] = [];
+
+    for (const card of waiting) {
+      const assignee = card.assigneeOrgNodeId ? this.orgNodes.get(card.assigneeOrgNodeId) : null;
+      const isPlanningCard = assignee?.role === "planner" || card.title.includes("Generate autonomous project plan");
+      const nextStatus: CardStatus = isPlanningCard ? "done" : "planned";
+      const summary = isPlanningCard
+        ? "Supervisor approved the planning pass. The generated execution cards are ready for Developer heartbeats."
+        : "Supervisor approved this execution plan. Developer may proceed on the next heartbeat.";
+      this.updateCardStatus(card.id, nextStatus, summary);
+      this.createMessage({
+        companyId,
+        threadId: "general",
+        authorType: "agent",
+        authorId: supervisor.id,
+        body: `Approved "${card.title}". ${summary}`,
+        linkedCardId: card.id
+      });
+      validatedCardIds.push(card.id);
+    }
+
+    const completedAt = new Date().toISOString();
+    this.orgNodes.set(supervisor.id, { ...supervisor, lastHeartbeatAt: completedAt });
+    const run: HeartbeatRun = {
+      id: uid(),
+      companyId,
+      orgNodeId: supervisor.id,
+      status: "completed",
+      startedAt,
+      completedAt,
+      promotedCardIds: validatedCardIds,
+      summary:
+        validatedCardIds.length > 0
+          ? `Supervisor validated ${validatedCardIds.length} card(s).`
+          : "Supervisor heartbeat completed; no cards were waiting for validation."
+    };
+    this.heartbeatRuns.set(run.id, run);
+    this.persist();
+    return { run, validatedCardIds };
+  }
+
   generateDailyReport(companyId: string): DailyReport {
     const company = this.companies.get(companyId);
     if (!company) throw new Error("Project not found");
-    const assistant = [...this.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "assistant") ?? null;
+    const supervisor = [...this.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "supervisor") ?? null;
     const cards = [...this.cards.values()].filter((c) => c.companyId === companyId);
     const openEscalations = [...this.escalations.values()].filter((e) => e.companyId === companyId && e.status === "open");
     const latestRuns = [...this.heartbeatRuns.values()]
@@ -1108,12 +1014,12 @@ export class LeanStore {
     const byStatus = (status: CardStatus) => cards.filter((c) => c.status === status).length;
     const reportDate = new Date().toISOString().slice(0, 10);
     const body = [
-      `Assistant project report for ${company.name} (${reportDate})`,
+      `Autonomous project report for ${company.name} (${reportDate})`,
       "",
       `Goal: ${this.goals.get(company.goalId)?.description || "No goal description set."}`,
       "",
-      `Board: ${byStatus("backlog")} backlog, ${byStatus("in_progress")} in progress, ${byStatus("boss")} boss, ${byStatus("in_review")} review, ${byStatus("closed")} closed.`,
-      `Agent: @assistant is the only AI worker.`,
+      `Board: ${byStatus("backlog")} backlog, ${byStatus("planned")} planned, ${byStatus("in_progress")} in progress, ${byStatus("waiting_supervisor")} waiting for supervisor, ${byStatus("waiting_user")} waiting for boss, ${byStatus("blocked")} blocked, ${byStatus("done")} done.`,
+      `Agents: @supervisor, @planner, @developer, and @recovery share project memory and task context.`,
       `Escalations: ${openEscalations.length} open item(s) need attention.`,
       "",
       "Recent heartbeat activity:",
@@ -1125,13 +1031,13 @@ export class LeanStore {
         : ["- No heartbeat runs recorded yet."]),
       "",
       openEscalations.length
-        ? `Recommended boss action: answer the open escalation(s) in Inbox so the project can keep moving.`
-        : `Recommended boss action: review cards in Review and close or send them back.`
+        ? `Recommended boss action: answer the open escalation(s) in Inbox so execution can resume.`
+        : `Recommended action: review Waiting for Supervisor and Blocked cards before expanding scope.`
     ].join("\n");
     const report: DailyReport = {
       id: uid(),
       companyId,
-      authorOrgNodeId: assistant?.id ?? null,
+      authorOrgNodeId: supervisor?.id ?? null,
       reportDate,
       body,
       createdAt: new Date().toISOString()
@@ -1139,9 +1045,9 @@ export class LeanStore {
     this.dailyReports.set(report.id, report);
     this.createMessage({
       companyId,
-      threadId: dmThreadId(company.operatorHandle, "assistant"),
+      threadId: dmThreadId(company.operatorHandle, "supervisor"),
       authorType: "agent",
-      authorId: assistant?.id ?? null,
+      authorId: supervisor?.id ?? null,
       body,
       linkedCardId: null
     });

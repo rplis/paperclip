@@ -2,10 +2,21 @@ import { z } from "zod";
 
 export type Id = string;
 
-export type Role = "assistant" | "ceo" | "cto" | "engineer" | "operator" | "hiring_manager" | "custom";
+export type Role = "supervisor" | "planner" | "developer" | "recovery" | "operator" | "custom";
 
-export const CARD_STATUS_VALUES = ["backlog", "in_progress", "boss", "in_review", "closed"] as const;
+export const CARD_STATUS_VALUES = [
+  "backlog",
+  "planned",
+  "in_progress",
+  "waiting_supervisor",
+  "waiting_user",
+  "blocked",
+  "done"
+] as const;
 export type CardStatus = (typeof CARD_STATUS_VALUES)[number];
+
+export const CARD_PRIORITY_VALUES = ["critical", "high", "medium", "low"] as const;
+export type CardPriority = (typeof CARD_PRIORITY_VALUES)[number];
 
 export const updateCardStatusSchema = z.object({
   status: z.enum(CARD_STATUS_VALUES),
@@ -25,13 +36,22 @@ export interface Company {
   name: string;
   goalId: Id;
   operatorHandle: string;
+  memory: ProjectMemory;
 }
 
 export interface CompanySettings {
   companyId: Id;
   heartbeatIntervalMinutes: number;
   dailyReportTime: string;
-  skillsmpEnabled: boolean;
+  supervisorValidationRequired: boolean;
+}
+
+export interface ProjectMemory {
+  objective: string;
+  strategicDecisions: string[];
+  executionHistory: string[];
+  failuresAndRetries: string[];
+  supervisorEvaluations: string[];
 }
 
 export interface Goal {
@@ -67,8 +87,12 @@ export interface BoardCard {
   title: string;
   description: string;
   status: CardStatus;
+  priority: CardPriority;
   assigneeOrgNodeId: Id | null;
   goalId: Id | null;
+  dependencies: string[];
+  risks: string[];
+  requiredUserDecision: string | null;
   completionSummary?: string | null;
 }
 
@@ -142,7 +166,7 @@ export const patchCompanySettingsSchema = z.object({
     .string()
     .regex(/^\d{2}:\d{2}$/)
     .optional(),
-  skillsmpEnabled: z.boolean().optional()
+  supervisorValidationRequired: z.boolean().optional()
 });
 
 export const createOrgNodeSchema = z.object({
@@ -150,7 +174,7 @@ export const createOrgNodeSchema = z.object({
   actorOrgNodeId: z.string().min(1).nullable(),
   name: z.string().min(1),
   handle: z.string().min(1),
-  role: z.enum(["assistant", "ceo", "cto", "engineer", "operator", "hiring_manager", "custom"]),
+  role: z.enum(["supervisor", "planner", "developer", "recovery", "operator", "custom"]),
   reportsToId: z.string().nullable(),
   subtreeSkillsManifest: z.array(z.string()).default([]),
   agentMd: z.string().optional(),
@@ -175,8 +199,12 @@ export const createCardSchema = z.object({
   companyId: z.string().min(1),
   title: z.string().min(1),
   description: z.string().default(""),
+  priority: z.enum(CARD_PRIORITY_VALUES).default("medium"),
   assigneeOrgNodeId: z.string().nullable(),
-  goalId: z.string().nullable()
+  goalId: z.string().nullable(),
+  dependencies: z.array(z.string()).default([]),
+  risks: z.array(z.string()).default([]),
+  requiredUserDecision: z.string().trim().min(1).nullable().default(null)
 });
 
 export const createMessageSchema = z.object({

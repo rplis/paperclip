@@ -120,10 +120,12 @@ function cardDescSnippet(text: string, maxLen = 140): string {
 function boardStatusLabel(s: BoardCard["status"]): string {
   const labels: Record<BoardCard["status"], string> = {
     backlog: "Backlog",
+    planned: "Planned",
     in_progress: "In progress",
-    boss: "Boss",
-    in_review: "Review",
-    closed: "Closed"
+    waiting_supervisor: "Waiting for Supervisor",
+    waiting_user: "Waiting for Boss",
+    blocked: "Blocked",
+    done: "Done"
   };
   return labels[s];
 }
@@ -191,11 +193,11 @@ export function App() {
   const [settingsDraft, setSettingsDraft] = useState({
     heartbeatIntervalMinutes: "10",
     dailyReportTime: "09:00",
-    skillsmpEnabled: false
+    supervisorValidationRequired: true
   });
 
   const orgOptions = bootstrap?.org ?? [];
-  const hiringManagerNode = orgOptions.find((node) => node.role === "hiring_manager" || node.handle === "hiring") ?? null;
+  const supervisorNode = orgOptions.find((node) => node.role === "supervisor" || node.handle === "supervisor") ?? null;
 
   const selectedOrgNode = useMemo(
     () => orgOptions.find((n) => n.id === selectedOrgNodeId) ?? null,
@@ -212,9 +214,9 @@ export function App() {
     setSettingsDraft({
       heartbeatIntervalMinutes: String(bootstrap.settings.heartbeatIntervalMinutes),
       dailyReportTime: bootstrap.settings.dailyReportTime,
-      skillsmpEnabled: bootstrap.settings.skillsmpEnabled
+      supervisorValidationRequired: bootstrap.settings.supervisorValidationRequired
     });
-  }, [bootstrap?.settings.heartbeatIntervalMinutes, bootstrap?.settings.dailyReportTime, bootstrap?.settings.skillsmpEnabled]);
+  }, [bootstrap?.settings.heartbeatIntervalMinutes, bootstrap?.settings.dailyReportTime, bootstrap?.settings.supervisorValidationRequired]);
 
   useEffect(() => {
     if (boardDetailCardId) return;
@@ -233,11 +235,11 @@ export function App() {
     return ["general", "escalations", ...dms];
   }, [bootstrap]);
 
-  const assistantDmThreadId = useMemo(() => {
+  const plannerDmThreadId = useMemo(() => {
     if (!bootstrap) return null;
-    const assistant = bootstrap.org.find((n) => n.handle === "assistant");
-    if (!assistant) return null;
-    return dmThreadId(bootstrap.company.operatorHandle, assistant.handle);
+    const planner = bootstrap.org.find((n) => n.handle === "planner");
+    if (!planner) return null;
+    return dmThreadId(bootstrap.company.operatorHandle, planner.handle);
   }, [bootstrap]);
 
   useEffect(() => {
@@ -296,7 +298,7 @@ export function App() {
         id: `e:${e.id}`,
         kind: "escalation",
         title: e.question,
-        subtitle: e.context || "Escalation to Boss",
+        subtitle: e.context || "Escalation to boss",
         at: new Date(e.createdAt).toLocaleString(),
         failed: e.status === "open",
         sortMs: Number.isFinite(sortMs) ? sortMs : 0
@@ -388,7 +390,7 @@ export function App() {
     setCreateCompany({ name: "", goalDescription: "" });
     await loadCompanyList();
     await load(cid);
-    setActiveChannelId(dmThreadId(data.company.operatorHandle, "assistant"));
+    setActiveChannelId(dmThreadId(data.company.operatorHandle, "planner"));
     setNav("channels");
     let polls = 0;
     const poll = window.setInterval(() => {
@@ -399,14 +401,14 @@ export function App() {
   }
 
   async function addOrgNode() {
-    if (!bootstrap || !hiringManagerNode || !newNode.reportingManagerId) return;
+    if (!bootstrap || !supervisorNode || !newNode.reportingManagerId) return;
     const skills = newNode.subtreeSkillsManifest
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
     const body: Record<string, unknown> = {
       companyId: bootstrap.company.id,
-      actorOrgNodeId: hiringManagerNode.id,
+      actorOrgNodeId: supervisorNode.id,
       name: newNode.name,
       handle: newNode.handle,
       role: newNode.role,
@@ -487,7 +489,7 @@ export function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           status: columnStatus,
-          completionSummary: columnStatus === "closed" ? "Created directly in Closed." : undefined
+          completionSummary: columnStatus === "done" ? "Created directly in Done." : undefined
         })
       });
     }
@@ -515,7 +517,7 @@ export function App() {
       return;
     }
     setCompletionSummaryError(null);
-    await setCardStatus(cardId, "closed", summary);
+    await setCardStatus(cardId, "done", summary);
     setClosingCardId(null);
     setCompletionSummary("");
   }
@@ -529,7 +531,7 @@ export function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           companyId: bootstrap.company.id,
-          threadId: dmThreadId(bootstrap.company.operatorHandle, "assistant"),
+          threadId: dmThreadId(bootstrap.company.operatorHandle, "developer"),
           authorType: "user",
           authorId: null,
           body: cardComment.trim(),
@@ -606,13 +608,13 @@ export function App() {
     setCeoRunError(null);
     setCeoRunLoading(true);
     try {
-      const response = await fetch(`${API}/companies/${bootstrap.company.id}/assistant/heartbeat`, { method: "POST" });
+      const response = await fetch(`${API}/companies/${bootstrap.company.id}/developer/heartbeat`, { method: "POST" });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error ?? response.statusText);
       await load(bootstrap.company.id);
       setNav("dashboard");
     } catch (err) {
-      setCeoRunError(err instanceof Error ? err.message : "Assistant heartbeat failed");
+      setCeoRunError(err instanceof Error ? err.message : "Project heartbeat failed");
     } finally {
       setCeoRunLoading(false);
     }
@@ -620,7 +622,7 @@ export function App() {
 
   async function kickAgentHeartbeat(agent: OrgNode) {
     if (!bootstrap) return;
-    if (agent.handle === "assistant") {
+    if (agent.handle === "planner" || agent.handle === "developer") {
       await kickAssistantHeartbeat();
       return;
     }
@@ -656,7 +658,7 @@ export function App() {
       body: JSON.stringify({
         heartbeatIntervalMinutes,
         dailyReportTime: settingsDraft.dailyReportTime,
-        skillsmpEnabled: settingsDraft.skillsmpEnabled
+        supervisorValidationRequired: settingsDraft.supervisorValidationRequired
       })
     });
     await load(bootstrap.company.id);
@@ -686,15 +688,17 @@ export function App() {
   }, [bootstrap?.company.id, load]);
 
   const dashStats = useMemo(() => {
-    if (!bootstrap) return { total: 0, backlog: 0, inProgress: 0, boss: 0, inReview: 0, closed: 0, team: 0 };
+    if (!bootstrap) return { total: 0, backlog: 0, planned: 0, inProgress: 0, waitingUser: 0, waitingSupervisor: 0, blocked: 0, done: 0, team: 0 };
     const cards = bootstrap.cards;
     return {
       total: cards.length,
       backlog: cards.filter((c) => c.status === "backlog").length,
+      planned: cards.filter((c) => c.status === "planned").length,
       inProgress: cards.filter((c) => c.status === "in_progress").length,
-      boss: cards.filter((c) => c.status === "boss").length,
-      inReview: cards.filter((c) => c.status === "in_review").length,
-      closed: cards.filter((c) => c.status === "closed").length,
+      waitingUser: cards.filter((c) => c.status === "waiting_user").length,
+      waitingSupervisor: cards.filter((c) => c.status === "waiting_supervisor").length,
+      blocked: cards.filter((c) => c.status === "blocked").length,
+      done: cards.filter((c) => c.status === "done").length,
       team: bootstrap.org.length
     };
   }, [bootstrap]);
@@ -702,13 +706,13 @@ export function App() {
   const latestDailyReport = bootstrap?.dailyReports[0] ?? null;
   const latestHeartbeatRuns = bootstrap?.heartbeatRuns.slice(0, 8) ?? [];
 
-  const assistantKickoffCard = useMemo(() => {
+  const plannerKickoffCard = useMemo(() => {
     if (!bootstrap) return null;
-    const assistant = bootstrap.org.find((n) => n.handle === "assistant");
+    const assistant = bootstrap.org.find((n) => n.handle === "planner");
     if (!assistant) return null;
     return (
       bootstrap.cards.find(
-        (c) => c.assigneeOrgNodeId === assistant.id && c.title.includes("Create the project plan")
+        (c) => c.assigneeOrgNodeId === assistant.id && c.title.includes("Generate autonomous project plan")
       ) ?? null
     );
   }, [bootstrap]);
@@ -723,7 +727,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error ?? response.statusText);
       await load(bootstrap.company.id);
     } catch (err) {
-      setCeoRunError(err instanceof Error ? err.message : "Assistant planning run failed");
+      setCeoRunError(err instanceof Error ? err.message : "Planning run failed");
     } finally {
       setCeoRunLoading(false);
     }
@@ -759,14 +763,14 @@ export function App() {
                 >
                   <div>
                     <strong>{company.name}</strong>
-                    <span className="muted"> assistant · {company.stats.cards} cards · {company.stats.heartbeatRuns} runs</span>
+                    <span className="muted"> Kodeks agents · {company.stats.cards} cards · {company.stats.heartbeatRuns} runs</span>
                   </div>
                   <div className="companyStats">
                     <span>{company.stats.inProgress} in progress</span>
-                    <span>{company.stats.boss} boss</span>
-                    <span>{company.stats.inReview} review</span>
+                    <span>{company.stats.boss} waiting boss</span>
+                    <span>{company.stats.inReview} waiting supervisor</span>
                     <span>{company.stats.backlog} backlog</span>
-                    <span>{company.stats.closed} closed</span>
+                    <span>{company.stats.closed} done</span>
                   </div>
                 </button>
               ))}
@@ -775,7 +779,7 @@ export function App() {
 
           <section className="onboardCard">
             <h1>New project</h1>
-            <p>Enter the project name and goal. The Assistant will turn it into small Backlog tasks.</p>
+            <p>Enter the project name and goal. Planning starts automatically and the agent team keeps execution moving.</p>
             <label htmlFor="co-name">Project name</label>
             <input
               id="co-name"
@@ -908,7 +912,7 @@ export function App() {
           Settings
         </button>
 
-        <div className="navSection">Assistant</div>
+        <div className="navSection">Agents</div>
         <ul className="agentList">
           {bootstrap.org.map((node) => (
             <li key={node.id}>
@@ -934,7 +938,7 @@ export function App() {
             <header className="mainHeader">
               <h1>DASHBOARD</h1>
               <p className="muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
-                The Assistant wakes on the configured heartbeat interval; the dev scheduler checks when work is due. Last refresh:{" "}
+                The Kodeks agent team wakes on the configured heartbeat interval; the scheduler checks continuity and due work. Last refresh:{" "}
                 {lastWorkspaceSyncAt ? new Date(lastWorkspaceSyncAt).toLocaleTimeString() : "—"}
               </p>
             </header>
@@ -949,16 +953,16 @@ export function App() {
                   <div className="num">{dashStats.inProgress}</div>
                 </div>
                 <div className="statCard">
-                  <h3>Backlog</h3>
-                  <div className="num">{dashStats.backlog}</div>
+                  <h3>Planned</h3>
+                  <div className="num">{dashStats.planned}</div>
                 </div>
                 <div className="statCard">
-                  <h3>Boss</h3>
-                  <div className="num">{dashStats.boss}</div>
+                  <h3>Waiting boss</h3>
+                  <div className="num">{dashStats.waitingUser}</div>
                 </div>
                 <div className="statCard">
-                  <h3>Review</h3>
-                  <div className="num">{dashStats.inReview}</div>
+                  <h3>Supervisor</h3>
+                  <div className="num">{dashStats.waitingSupervisor}</div>
                 </div>
                 <div className="statCard">
                   <h3>Heartbeat</h3>
@@ -968,7 +972,7 @@ export function App() {
 
               <div className="panelBlock">
                 <div className="panelHead">
-                  <h2>Assistant report</h2>
+                  <h2>Project report</h2>
                   <button type="button" className="btnOutline" disabled={reportLoading} onClick={() => void generateDailyReport()}>
                     {reportLoading ? "Generating…" : "Generate report"}
                   </button>
@@ -979,7 +983,7 @@ export function App() {
                     <pre className="reportBody">{latestDailyReport.body}</pre>
                   </>
                 ) : (
-                  <p className="muted">No Assistant report generated yet.</p>
+                  <p className="muted">No project report generated yet.</p>
                 )}
               </div>
 
@@ -988,7 +992,7 @@ export function App() {
                   <h2>Heartbeat runs</h2>
                   <div className="panelActions">
                     <button type="button" className="btnOutline" disabled={ceoRunLoading} onClick={() => void kickAssistantHeartbeat()}>
-                      {ceoRunLoading ? "Kicking Assistant…" : "Kick Assistant heartbeat"}
+                      {ceoRunLoading ? "Kicking agents…" : "Kick project heartbeat"}
                     </button>
                     <button type="button" className="btnOutline" disabled={heartbeatLoading} onClick={() => void runHeartbeatNow()}>
                       {heartbeatLoading ? "Running…" : "Run all"}
@@ -1043,7 +1047,7 @@ export function App() {
             <div className="mainBody">
               <div className="settingsPanel">
                 <h2>Project operations</h2>
-                <label htmlFor="heartbeat-minutes">Assistant heartbeat interval</label>
+                <label htmlFor="heartbeat-minutes">Agent heartbeat interval</label>
                 <div className="settingsRow">
                   <input
                     id="heartbeat-minutes"
@@ -1055,7 +1059,7 @@ export function App() {
                   />
                   <span className="muted">minutes</span>
                 </div>
-                <label htmlFor="daily-report-time">Assistant report time</label>
+                <label htmlFor="daily-report-time">Project report time</label>
                 <input
                   id="daily-report-time"
                   type="time"
@@ -1065,14 +1069,11 @@ export function App() {
                 <label className="checkRow">
                   <input
                     type="checkbox"
-                    checked={settingsDraft.skillsmpEnabled}
-                    onChange={(e) => setSettingsDraft((s) => ({ ...s, skillsmpEnabled: e.target.checked }))}
+                    checked={settingsDraft.supervisorValidationRequired}
+                    onChange={(e) => setSettingsDraft((s) => ({ ...s, supervisorValidationRequired: e.target.checked }))}
                   />
-                  Enable external skill search
+                  Require Supervisor validation for major execution steps
                 </label>
-                <p className="muted small">
-                  SkillsMP requires <code>SKILLSMP_API_KEY</code> in the API environment. The app never stores the raw key in browser state.
-                </p>
                 <button type="button" className="btnPrimary" onClick={() => void saveSettings()}>
                   Save settings
                 </button>
@@ -1102,12 +1103,12 @@ export function App() {
               <div className="channelPane">
                 <div className="channelHeader">
                   <h2>{threadNavTitle(activeChannelId)}</h2>
-                  {assistantDmThreadId && activeChannelId === assistantDmThreadId && assistantKickoffCard ? (
+                  {plannerDmThreadId && activeChannelId === plannerDmThreadId && plannerKickoffCard ? (
                     <button type="button" className="btnOutline channelRerun" disabled={ceoRunLoading} onClick={() => void runAssistantPlan()}>
-                      {ceoRunLoading ? "Running…" : "Kick Assistant planning heartbeat"}
+                      {ceoRunLoading ? "Running…" : "Kick Planning heartbeat"}
                     </button>
                   ) : null}
-                  {assistantDmThreadId && activeChannelId === assistantDmThreadId && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
+                  {plannerDmThreadId && activeChannelId === plannerDmThreadId && ceoRunError ? <p className="calloutErr">{ceoRunError}</p> : null}
                 </div>
                 <div className="channelTimeline">
                   {channelMessages.map((m) => {
@@ -1369,11 +1370,11 @@ export function App() {
                     </label>
                     <select
                       id="card-status"
-                      value={closingCardId === boardDetailCard.id ? "closed" : boardDetailCard.status}
+                      value={closingCardId === boardDetailCard.id ? "done" : boardDetailCard.status}
                       onChange={(e) => {
                         const nextStatus = e.target.value as BoardCard["status"];
                         setCompletionSummaryError(null);
-                        if (nextStatus === "closed" && boardDetailCard.status !== "closed") {
+                        if (nextStatus === "done" && boardDetailCard.status !== "done") {
                           setClosingCardId(boardDetailCard.id);
                           setCompletionSummary(boardDetailCard.completionSummary ?? "");
                           return;
@@ -1383,7 +1384,7 @@ export function App() {
                         void setCardStatus(boardDetailCard.id, nextStatus);
                       }}
                     >
-                      {(["backlog", "in_progress", "boss", "in_review", "closed"] as const).map((s) => (
+                      {(["backlog", "planned", "in_progress", "waiting_supervisor", "waiting_user", "blocked", "done"] as const).map((s) => (
                         <option key={s} value={s}>
                           {boardStatusLabel(s)}
                         </option>
@@ -1415,10 +1416,10 @@ export function App() {
                       </button>
                     </div>
                   ) : null}
-                  {(boardDetailCard.status === "closed" || boardDetailCard.status === "boss" || boardDetailCard.status === "in_review") &&
+                  {(boardDetailCard.status === "done" || boardDetailCard.status === "waiting_user" || boardDetailCard.status === "waiting_supervisor" || boardDetailCard.status === "blocked") &&
                   boardDetailCard.completionSummary ? (
                     <div className="cardModalSection">
-                      <div className="muted cardModalK">{boardDetailCard.status === "boss" ? "What boss needs to do" : "Completion summary"}</div>
+                      <div className="muted cardModalK">{boardDetailCard.status === "waiting_user" ? "What boss needs to do" : "Status summary"}</div>
                       <div className="cardModalDesc">{boardDetailCard.completionSummary}</div>
                     </div>
                   ) : null}
