@@ -37,7 +37,7 @@ IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use
 \`\`\`json
 {"cards":[{"title":"Example planning card - replace with real work","description":"Describe one concrete task that advances this specific project goal.","priority":"high","dependencies":[],"risks":["Example risk"],"requiredUserDecision":null}]}
 \`\`\`
-Rules: Max 16 cards. Use only this agent model: Supervisor, Planning, Developer, Recovery. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action.`;
+Rules: Max 16 cards. Use only this agent model: Supervisor, PM, Planning, Developer, Recovery. PM owns goal delivery tracking, milestones, and daily progress reporting. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action.`;
 }
 
 function buildAgentTaskPrompt(input: {
@@ -611,6 +611,17 @@ async function handleAssistantHeartbeat(req: express.Request, res: express.Respo
   res.json(out);
 }
 
+function runDuePmReports(now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  const hhmm = now.toTimeString().slice(0, 5);
+  for (const companyId of store.companies.keys()) {
+    const settings = store.getCompanySettings(companyId);
+    if (hhmm < settings.dailyReportTime) continue;
+    const alreadyReported = [...store.dailyReports.values()].some((report) => report.companyId === companyId && report.reportDate === today);
+    if (!alreadyReported) store.generateDailyReport(companyId);
+  }
+}
+
 app.post("/api/companies/:companyId/planner/heartbeat", handleAssistantHeartbeat);
 app.post("/api/companies/:companyId/developer/heartbeat", handleAssistantHeartbeat);
 app.post("/api/companies/:companyId/assistant/heartbeat", handleAssistantHeartbeat);
@@ -629,6 +640,13 @@ app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
         return;
       }
       res.json(out);
+      return;
+    }
+
+    if (agent.handle === "pm" || agent.role === "pm") {
+      const out = store.runHeartbeatForAgent(agent.id, 0, { force: true });
+      const report = store.generateDailyReport(agent.companyId);
+      res.json({ ...out, report });
       return;
     }
 
@@ -806,6 +824,12 @@ app.listen(port, () => {
         // eslint-disable-next-line no-console
         console.error("[lean-api] heartbeat failed", companyId, err);
       });
+    }
+    try {
+      runDuePmReports();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[lean-api] PM report scheduler failed", err);
     }
   }, heartbeatMs);
 });

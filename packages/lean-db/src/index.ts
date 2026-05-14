@@ -12,6 +12,7 @@ import {
   type Goal,
   type HeartbeatRun,
   type OrgNode,
+  type Role,
   type CardStatus
 } from "@lean/shared";
 import { randomUUID } from "node:crypto";
@@ -20,6 +21,7 @@ import { dirname, join } from "node:path";
 import {
   defaultDeveloperMarkdownPack,
   defaultPlannerMarkdownPack,
+  defaultPmMarkdownPack,
   defaultRecoveryMarkdownPack,
   defaultSupervisorMarkdownPack,
   mergeAgentPack
@@ -215,14 +217,14 @@ export class LeanStore {
   }
 
   private ensureProjectAgentTeam(company: Company) {
-    const allowedRoles = new Set(["supervisor", "planner", "developer", "recovery", "operator", "custom"]);
+    const allowedRoles = new Set(["supervisor", "pm", "planner", "developer", "recovery", "operator", "custom"]);
     const before = [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
     const legacyIds = new Set(before.filter((node) => !allowedRoles.has(node.role) || ["assistant", "ceo", "hiring"].includes(node.handle)).map((node) => node.id));
     for (const id of legacyIds) this.orgNodes.delete(id);
 
     const existing = () => [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
     const makeNode = (
-      role: "supervisor" | "planner" | "developer" | "recovery",
+      role: Extract<Role, "supervisor" | "pm" | "planner" | "developer" | "recovery">,
       name: string,
       handle: string,
       reportsToId: string | null,
@@ -265,6 +267,14 @@ export class LeanStore {
       null,
       ["strategic-alignment", "risk-review", "approval-gates"],
       defaultSupervisorMarkdownPack(company.name)
+    );
+    makeNode(
+      "pm",
+      "PM Agent",
+      "pm",
+      supervisor.id,
+      ["goal-delivery", "milestones", "daily-reporting", "progress-tracking"],
+      defaultPmMarkdownPack(company.name)
     );
     const planner = makeNode(
       "planner",
@@ -414,6 +424,17 @@ export class LeanStore {
       ...defaultSupervisorMarkdownPack(company.name)
     });
 
+    const pm = this.createOrgNode({
+      actorOrgNodeId: supervisor.id,
+      companyId: company.id,
+      name: "PM Agent",
+      handle: "pm",
+      role: "pm",
+      reportsToId: supervisor.id,
+      subtreeSkillsManifest: ["goal-delivery", "milestones", "daily-reporting", "progress-tracking"],
+      ...defaultPmMarkdownPack(company.name)
+    });
+
     const planner = this.createOrgNode({
       actorOrgNodeId: supervisor.id,
       companyId: company.id,
@@ -466,7 +487,15 @@ export class LeanStore {
       threadId: "general",
       authorType: "system",
       authorId: null,
-      body: "Project created. Supervisor, Planning, Developer, and Recovery agents are active. Planning has started and will place work on the Kanban board.",
+      body: "Project created. Supervisor, PM, Planning, Developer, and Recovery agents are active. Planning has started and PM will track delivery against the goal.",
+      linkedCardId: kickoff.id
+    });
+    this.createMessage({
+      companyId: company.id,
+      threadId: dmThreadId(pm.handle, company.operatorHandle),
+      authorType: "agent",
+      authorId: pm.id,
+      body: "I will own goal delivery tracking, maintain the milestone view, and issue daily progress reports in the Goal tab.",
       linkedCardId: kickoff.id
     });
     this.createMessage({
@@ -539,11 +568,13 @@ export class LeanStore {
     const baseFiles: AgentMarkdownPack =
       input.role === "supervisor"
         ? defaultSupervisorMarkdownPack(companyName)
-        : input.role === "planner"
-          ? defaultPlannerMarkdownPack(companyName)
-          : input.role === "recovery"
-            ? defaultRecoveryMarkdownPack(companyName)
-            : defaultDeveloperMarkdownPack(companyName, input.name, handleLc, managerHandle);
+        : input.role === "pm"
+          ? defaultPmMarkdownPack(companyName)
+          : input.role === "planner"
+            ? defaultPlannerMarkdownPack(companyName)
+            : input.role === "recovery"
+              ? defaultRecoveryMarkdownPack(companyName)
+              : defaultDeveloperMarkdownPack(companyName, input.name, handleLc, managerHandle);
     const files = mergeAgentPack(baseFiles, {
       agentMd: input.agentMd,
       heartbeatMd: input.heartbeatMd,
@@ -1019,7 +1050,7 @@ export class LeanStore {
   generateDailyReport(companyId: string): DailyReport {
     const company = this.companies.get(companyId);
     if (!company) throw new Error("Project not found");
-    const supervisor = [...this.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "supervisor") ?? null;
+    const pm = [...this.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "pm") ?? null;
     const cards = [...this.cards.values()].filter((c) => c.companyId === companyId);
     const openEscalations = [...this.escalations.values()].filter((e) => e.companyId === companyId && e.status === "open");
     const latestRuns = [...this.heartbeatRuns.values()]
@@ -1027,14 +1058,45 @@ export class LeanStore {
       .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
       .slice(0, 8);
     const byStatus = (status: CardStatus) => cards.filter((c) => c.status === status).length;
+    const pct = cards.length ? Math.round((byStatus("done") / cards.length) * 100) : 0;
+    const milestoneCards = cards
+      .filter((card) => card.priority === "critical" || card.priority === "high")
+      .sort((a, b) => {
+        const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+        return rank[a.priority] - rank[b.priority] || a.title.localeCompare(b.title);
+      })
+      .slice(0, 6);
+    const nextMilestone = cards
+      .filter((card) => card.status !== "done")
+      .sort((a, b) => {
+        const statusRank: Record<CardStatus, number> = {
+          in_progress: 0,
+          waiting_supervisor: 1,
+          waiting_user: 2,
+          blocked: 3,
+          planned: 4,
+          backlog: 5,
+          done: 6
+        };
+        const priorityRank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+        return statusRank[a.status] - statusRank[b.status] || priorityRank[a.priority] - priorityRank[b.priority] || a.title.localeCompare(b.title);
+      })[0];
     const reportDate = new Date().toISOString().slice(0, 10);
     const body = [
-      `Autonomous project report for ${company.name} (${reportDate})`,
+      `PM daily delivery report for ${company.name} (${reportDate})`,
       "",
       `Goal: ${this.goals.get(company.goalId)?.description || "No goal description set."}`,
       "",
+      `Delivery progress: ${byStatus("done")}/${cards.length} cards done (${pct}%).`,
+      nextMilestone ? `Main milestone now: ${nextMilestone.title} (${nextMilestone.status}).` : "Main milestone now: all tracked work is done; Planning should create the next delivery slice.",
+      "",
+      "Milestones:",
+      ...(milestoneCards.length
+        ? milestoneCards.map((card) => `- ${card.title}: ${card.status}`)
+        : ["- No high-priority milestones have been created yet."]),
+      "",
       `Board: ${byStatus("backlog")} backlog, ${byStatus("planned")} planned, ${byStatus("in_progress")} in progress, ${byStatus("waiting_supervisor")} waiting for supervisor, ${byStatus("waiting_user")} waiting for boss, ${byStatus("blocked")} blocked, ${byStatus("done")} done.`,
-      `Agents: @supervisor, @planner, @developer, and @recovery share project memory and task context.`,
+      `Agents: @supervisor, @pm, @planner, @developer, and @recovery share project memory and task context.`,
       `Escalations: ${openEscalations.length} open item(s) need attention.`,
       "",
       "Recent heartbeat activity:",
@@ -1052,7 +1114,7 @@ export class LeanStore {
     const report: DailyReport = {
       id: uid(),
       companyId,
-      authorOrgNodeId: supervisor?.id ?? null,
+      authorOrgNodeId: pm?.id ?? null,
       reportDate,
       body,
       createdAt: new Date().toISOString()
@@ -1060,9 +1122,9 @@ export class LeanStore {
     this.dailyReports.set(report.id, report);
     this.createMessage({
       companyId,
-      threadId: dmThreadId(company.operatorHandle, "supervisor"),
+      threadId: dmThreadId(company.operatorHandle, "pm"),
       authorType: "agent",
-      authorId: supervisor?.id ?? null,
+      authorId: pm?.id ?? null,
       body,
       linkedCardId: null
     });

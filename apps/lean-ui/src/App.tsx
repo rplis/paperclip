@@ -716,6 +716,24 @@ export function App() {
   }, [bootstrap]);
 
   const latestDailyReport = bootstrap?.dailyReports[0] ?? null;
+  const pmNode = bootstrap?.org.find((n) => n.handle === "pm" || n.role === "pm") ?? null;
+  const goalMilestones = useMemo(() => {
+    if (!bootstrap) return [];
+    const statusRank: Record<BoardCard["status"], number> = {
+      in_progress: 0,
+      waiting_supervisor: 1,
+      waiting_user: 2,
+      blocked: 3,
+      planned: 4,
+      backlog: 5,
+      done: 6
+    };
+    const priorityRank: Record<BoardCard["priority"], number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    return [...bootstrap.cards]
+      .filter((card) => card.priority === "critical" || card.priority === "high")
+      .sort((a, b) => statusRank[a.status] - statusRank[b.status] || priorityRank[a.priority] - priorityRank[b.priority] || a.title.localeCompare(b.title))
+      .slice(0, 8);
+  }, [bootstrap]);
   const latestHeartbeatRuns = bootstrap?.heartbeatRuns.slice(0, 8) ?? [];
 
   const plannerKickoffCard = useMemo(() => {
@@ -984,7 +1002,7 @@ export function App() {
 
               <div className="panelBlock">
                 <div className="panelHead">
-                  <h2>Project report</h2>
+                  <h2>PM delivery report</h2>
                   <button type="button" className="btnOutline" disabled={reportLoading} onClick={() => void generateDailyReport()}>
                     {reportLoading ? "Generating…" : "Generate report"}
                   </button>
@@ -1071,7 +1089,7 @@ export function App() {
                   />
                   <span className="muted">minutes</span>
                 </div>
-                <label htmlFor="daily-report-time">Project report time</label>
+                <label htmlFor="daily-report-time">PM report time</label>
                 <input
                   id="daily-report-time"
                   type="time"
@@ -1272,6 +1290,61 @@ export function App() {
               <div className="goalPage">
                 <h2>{bootstrap.goal?.title}</h2>
                 <p className="desc">{bootstrap.goal?.description}</p>
+
+                <div className="dashGrid">
+                  <div className="statCard">
+                    <h3>Delivery owner</h3>
+                    <div className="num">@{pmNode?.handle ?? "pm"}</div>
+                  </div>
+                  <div className="statCard">
+                    <h3>Done</h3>
+                    <div className="num">{dashStats.done}/{dashStats.total}</div>
+                  </div>
+                  <div className="statCard">
+                    <h3>Waiting boss</h3>
+                    <div className="num">{dashStats.waitingUser}</div>
+                  </div>
+                </div>
+
+                <div className="panelBlock">
+                  <div className="panelHead">
+                    <h2>Main milestones</h2>
+                    <span className="muted small">Owned by PM</span>
+                  </div>
+                  {goalMilestones.length ? (
+                    <div className="cardThread">
+                      {goalMilestones.map((card) => (
+                        <button key={card.id} type="button" className="channelRow" onClick={() => setBoardDetailCardId(card.id)}>
+                          <strong>{card.title}</strong>
+                          <span className="muted">
+                            {boardStatusLabel(card.status)} · {card.priority}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No high-priority milestones have been created yet.</p>
+                  )}
+                </div>
+
+                <div className="panelBlock">
+                  <div className="panelHead">
+                    <h2>PM daily report</h2>
+                    <button type="button" className="btnOutline" disabled={reportLoading} onClick={() => void generateDailyReport()}>
+                      {reportLoading ? "Generating…" : "Generate report"}
+                    </button>
+                  </div>
+                  {latestDailyReport ? (
+                    <>
+                      <p className="muted small">
+                        Created {new Date(latestDailyReport.createdAt).toLocaleString()} by @{pmNode?.handle ?? "pm"}
+                      </p>
+                      <pre className="reportBody">{latestDailyReport.body}</pre>
+                    </>
+                  ) : (
+                    <p className="muted">No PM report generated yet.</p>
+                  )}
+                </div>
               </div>
             </div>
           </>
