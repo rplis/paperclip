@@ -1053,19 +1053,8 @@ export class LeanStore {
     const pm = [...this.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "pm") ?? null;
     const cards = [...this.cards.values()].filter((c) => c.companyId === companyId);
     const openEscalations = [...this.escalations.values()].filter((e) => e.companyId === companyId && e.status === "open");
-    const latestRuns = [...this.heartbeatRuns.values()]
-      .filter((r) => r.companyId === companyId)
-      .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
-      .slice(0, 8);
     const byStatus = (status: CardStatus) => cards.filter((c) => c.status === status).length;
     const pct = cards.length ? Math.round((byStatus("done") / cards.length) * 100) : 0;
-    const milestoneCards = cards
-      .filter((card) => card.priority === "critical" || card.priority === "high")
-      .sort((a, b) => {
-        const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
-        return rank[a.priority] - rank[b.priority] || a.title.localeCompare(b.title);
-      })
-      .slice(0, 6);
     const nextMilestone = cards
       .filter((card) => card.status !== "done")
       .sort((a, b) => {
@@ -1081,35 +1070,28 @@ export class LeanStore {
         const priorityRank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
         return statusRank[a.status] - statusRank[b.status] || priorityRank[a.priority] - priorityRank[b.priority] || a.title.localeCompare(b.title);
       })[0];
+    const needsBossCount = byStatus("waiting_user") + openEscalations.length;
+    const blockedCount = byStatus("blocked");
+    const reviewCount = byStatus("waiting_supervisor");
+    const nextAction =
+      needsBossCount > 0
+        ? "Boss: answer the waiting decision(s) so execution can resume."
+        : blockedCount > 0
+          ? "PM/Supervisor: clear blocked work before expanding scope."
+          : reviewCount > 0
+            ? "Supervisor: validate waiting execution plans."
+            : nextMilestone
+              ? `Team: continue ${nextMilestone.title}.`
+              : "Planning: create the next delivery slice.";
     const reportDate = new Date().toISOString().slice(0, 10);
     const body = [
-      `PM daily delivery report for ${company.name} (${reportDate})`,
+      `PM report — ${company.name} (${reportDate})`,
       "",
-      `Goal: ${this.goals.get(company.goalId)?.description || "No goal description set."}`,
-      "",
-      `Delivery progress: ${byStatus("done")}/${cards.length} cards done (${pct}%).`,
-      nextMilestone ? `Main milestone now: ${nextMilestone.title} (${nextMilestone.status}).` : "Main milestone now: all tracked work is done; Planning should create the next delivery slice.",
-      "",
-      "Milestones:",
-      ...(milestoneCards.length
-        ? milestoneCards.map((card) => `- ${card.title}: ${card.status}`)
-        : ["- No high-priority milestones have been created yet."]),
-      "",
-      `Board: ${byStatus("backlog")} backlog, ${byStatus("planned")} planned, ${byStatus("in_progress")} in progress, ${byStatus("waiting_supervisor")} waiting for supervisor, ${byStatus("waiting_user")} waiting for boss, ${byStatus("blocked")} blocked, ${byStatus("done")} done.`,
-      `Agents: @supervisor, @pm, @planner, @developer, and @recovery share project memory and task context.`,
-      `Escalations: ${openEscalations.length} open item(s) need attention.`,
-      "",
-      "Recent heartbeat activity:",
-      ...(latestRuns.length
-        ? latestRuns.map((run) => {
-            const node = this.orgNodes.get(run.orgNodeId);
-            return `- @${node?.handle ?? "unknown"}: ${run.summary}`;
-          })
-        : ["- No heartbeat runs recorded yet."]),
-      "",
-      openEscalations.length
-        ? `Recommended boss action: answer the open escalation(s) in Inbox so execution can resume.`
-        : `Recommended action: review Waiting for Supervisor and Blocked cards before expanding scope.`
+      `Progress: ${byStatus("done")}/${cards.length} done (${pct}%). Active: ${byStatus("in_progress")} in progress, ${byStatus("planned")} planned.`,
+      nextMilestone ? `Main milestone: ${nextMilestone.title} (${nextMilestone.status}).` : "Main milestone: all tracked work is done; Planning should create the next delivery slice.",
+      `Needs boss: ${needsBossCount === 0 ? "none" : `${needsBossCount} item(s)`}.`,
+      `Blockers: ${blockedCount} blocked, ${reviewCount} waiting for Supervisor.`,
+      `Next: ${nextAction}`
     ].join("\n");
     const report: DailyReport = {
       id: uid(),
