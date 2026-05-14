@@ -84,13 +84,19 @@ Do the smallest useful unit of work for this card now. Return a concise progress
 2. Evidence or output for review.
 3. Remaining blocker or next step.
 
-Do not invent external state. If the card cannot be completed with available context, say exactly what is missing and phrase a DM question for @boss.
+Autonomy rules:
+- Try to solve the task with available context before asking @boss.
+- If a live path, paid action, credential, private file, or strategic choice is missing, first complete every safe audit, draft, simulation, or partial deliverable that does not require it.
+- Ask @boss only for true blockers or strategic decisions that cannot be resolved safely by the agent team.
+- Never move a card to Waiting for Boss just because more evidence would be nice.
+
+Do not invent external state. If you truly need @boss before continuing, make the request actionable and self-contained.
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
 \`\`\`json
 {"status":"done","summary":"What was completed and what evidence exists.","bossAsk":""}
 \`\`\`
-If you need @boss before continuing, use \`"status":"waiting_user"\`, put the precise request in \`bossAsk\`, and explain what boss should do next in \`summary\`.
+If you need @boss before continuing, use \`"status":"waiting_user"\` only when there is no safe autonomous workaround. Put one precise request in \`bossAsk\` using this format: "I need <specific decision/access/artifact>. Reason: <why it blocks the next step>. Default if no preference: <safe default>." Keep \`summary\` focused on evidence already gathered.
 If you need Supervisor validation before execution, use \`"status":"waiting_supervisor"\` and summarize the execution plan.`;
 }
 
@@ -139,8 +145,23 @@ function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | n
   return null;
 }
 
+function hasActionableBossAsk(parsed: AssistantTaskResult | null) {
+  if (!parsed || parsed.status !== "waiting_user") return false;
+  const ask = parsed.bossAsk.trim();
+  if (!ask) return false;
+  return /i need|please|provide|approve|choose|confirm|grant|share|send|select|authorize|decyduj|wybierz|zatwierd/i.test(ask);
+}
+
+function formatBossAskSummary(parsed: AssistantTaskResult, fallbackSummary: string) {
+  const ask = parsed.bossAsk.trim();
+  const summary = parsed.summary.trim();
+  if (!ask) return fallbackSummary;
+  if (summary && summary !== ask) return `Ask: ${ask}\n\nContext: ${summary}`;
+  return `Ask: ${ask}`;
+}
+
 function inferBossDependency(cardTitle: string, cardDescription: string, parsed: AssistantTaskResult | null) {
-  if (parsed) return parsed.status === "waiting_user" || Boolean(parsed.bossAsk);
+  if (parsed) return hasActionableBossAsk(parsed);
   const taskText = `${cardTitle}\n${cardDescription}`;
   return /@boss|ask boss|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
     taskText
@@ -446,17 +467,25 @@ async function executeAgentActiveCard(agentId: string) {
   const taskResult = result.exitCode === 0 ? extractAssistantTaskResult(result.log) : null;
   const summary = taskResult?.summary || preview || "Heartbeat completed the assigned task.";
   const needsUser = result.exitCode === 0 && inferBossDependency(activeCard.title, activeCard.description, taskResult);
-  const nextStatus = taskResult?.status === "waiting_supervisor" ? "waiting_supervisor" : needsUser ? "waiting_user" : "done";
+  const invalidBossEscalation = result.exitCode === 0 && taskResult?.status === "waiting_user" && !needsUser;
+  const nextStatus =
+    taskResult?.status === "waiting_supervisor" || invalidBossEscalation ? "waiting_supervisor" : needsUser ? "waiting_user" : "done";
+  const statusSummary =
+    needsUser && taskResult
+      ? formatBossAskSummary(taskResult, summary)
+      : invalidBossEscalation
+        ? `Supervisor review needed: the agent tried to escalate to @boss without a clear actionable blocker.\n\nAgent summary: ${summary}`
+        : summary;
 
   if (result.exitCode === 0) {
-    store.updateCardStatus(activeCard.id, nextStatus, summary);
+    store.updateCardStatus(activeCard.id, nextStatus, statusSummary);
     if (needsUser) {
       store.createMessage({
         companyId: agent.companyId,
         threadId: dmThreadId(company.operatorHandle, agent.handle),
         authorType: "agent",
         authorId: agent.id,
-        body: taskResult?.bossAsk || summary,
+        body: statusSummary,
         linkedCardId: activeCard.id
       });
     }
@@ -476,10 +505,10 @@ async function executeAgentActiveCard(agentId: string) {
     body:
       result.exitCode === 0
         ? needsUser
-          ? `Moved "${activeCard.title}" to Waiting for Boss.\n\n${summary}`
+          ? `Moved "${activeCard.title}" to Waiting for Boss.\n\n${statusSummary}`
           : nextStatus === "waiting_supervisor"
-            ? `Moved "${activeCard.title}" to Waiting for Supervisor.\n\n${summary}`
-            : `Completed "${activeCard.title}" and moved it to Done.\n\n${summary}`
+            ? `Moved "${activeCard.title}" to Waiting for Supervisor.\n\n${statusSummary}`
+            : `Completed "${activeCard.title}" and moved it to Done.\n\n${statusSummary}`
         : `Moved "${activeCard.title}" to Waiting for Boss because the Kodeks runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
     linkedCardId: activeCard.id
   });

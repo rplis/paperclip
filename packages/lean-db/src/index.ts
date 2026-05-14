@@ -324,13 +324,28 @@ export class LeanStore {
         .replace(/This card is already In review and waiting on you\./g, "This now needs a delegated follow-up task if action is still required.")
         .replace(/card\(s\) are In review—ping @boss in this thread or #general if you need a decision so work can keep moving\./g, "card(s) were waiting for review. Create explicit follow-up tasks for whoever owns the next action.")
         .replace(/\bBoss\b/g, "Waiting for Boss")
+        .replace(/Waiting for Waiting for Boss/g, "Waiting for Boss")
         .replace(/\bReview\b/g, "Waiting for Supervisor")
+        .replace(/Waiting for Waiting for Supervisor/g, "Waiting for Supervisor")
         .replace(/\bClosed\b/g, "Done")
         .replace(/\bAssistant\b/g, "Developer Agent")
         .replace(/\bassistant\b/g, "developer");
 
     for (const [id, card] of this.cards) {
-      this.cards.set(id, { ...card, title: clean(card.title), description: clean(card.description) });
+      const cleanedSummary = card.completionSummary ? clean(card.completionSummary) : card.completionSummary;
+      const clearerBossSummary =
+        card.status === "waiting_user" &&
+        cleanedSummary &&
+        !/^Ask:/i.test(cleanedSummary) &&
+        /please provide|please approve|authorize|provide or approve|choose|confirm|grant|share|send|select/i.test(cleanedSummary)
+          ? `Ask: ${cleanedSummary}`
+          : cleanedSummary;
+      this.cards.set(id, {
+        ...card,
+        title: clean(card.title),
+        description: clean(card.description),
+        completionSummary: clearerBossSummary
+      });
     }
     for (const [id, message] of this.messages) {
       this.messages.set(id, { ...message, body: cleanConversationBody(clean(message.body)) });

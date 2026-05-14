@@ -130,6 +130,18 @@ function boardStatusLabel(s: BoardCard["status"]): string {
   return labels[s];
 }
 
+function parseBossSummary(summary: string): { ask: string; context: string } {
+  const trimmed = summary.trim();
+  const askMatch = /^Ask:\s*([\s\S]*?)(?:\n\s*\nContext:\s*([\s\S]*))?$/i.exec(trimmed);
+  if (askMatch) {
+    return {
+      ask: askMatch[1]?.trim() || trimmed,
+      context: askMatch[2]?.trim() || ""
+    };
+  }
+  return { ask: trimmed, context: "" };
+}
+
 function isStaleReviewNotice(message: ChannelMessage): boolean {
   return (
     (message.body.includes("Review requested for") || message.body.includes("were waiting for review"))
@@ -1419,8 +1431,28 @@ export function App() {
                   {(boardDetailCard.status === "done" || boardDetailCard.status === "waiting_user" || boardDetailCard.status === "waiting_supervisor" || boardDetailCard.status === "blocked") &&
                   boardDetailCard.completionSummary ? (
                     <div className="cardModalSection">
-                      <div className="muted cardModalK">{boardDetailCard.status === "waiting_user" ? "What boss needs to do" : "Status summary"}</div>
-                      <div className="cardModalDesc">{boardDetailCard.completionSummary}</div>
+                      {boardDetailCard.status === "waiting_user" ? (
+                        (() => {
+                          const bossSummary = parseBossSummary(boardDetailCard.completionSummary ?? "");
+                          return (
+                            <>
+                              <div className="muted cardModalK">What I need from @boss</div>
+                              <div className="cardModalDesc">{bossSummary.ask}</div>
+                              {bossSummary.context ? (
+                                <>
+                                  <div className="muted cardModalK">Context</div>
+                                  <div className="cardModalDesc">{bossSummary.context}</div>
+                                </>
+                              ) : null}
+                            </>
+                          );
+                        })()
+                      ) : (
+                        <>
+                          <div className="muted cardModalK">Status summary</div>
+                          <div className="cardModalDesc">{boardDetailCard.completionSummary}</div>
+                        </>
+                      )}
                     </div>
                   ) : null}
                   <div className="cardModalSection">
