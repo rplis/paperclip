@@ -239,8 +239,9 @@ function findRuntimeBlockedUserCard(companyId: string, assistantId: string) {
     (card) =>
       card.companyId === companyId &&
       card.assigneeOrgNodeId === assistantId &&
-      card.status === "waiting_user" &&
-      card.completionSummary?.startsWith("Kodeks runtime needs attention:")
+      (card.status === "blocked" || card.status === "waiting_user") &&
+      (card.completionSummary?.startsWith("Kodeks runtime needs attention:") ||
+        card.completionSummary?.startsWith("Planning runtime needs attention:"))
   );
 }
 
@@ -274,8 +275,8 @@ async function runAssistantPlanCodex(companyId: string): Promise<AssistantPlanCo
       const errorSummary = extractCodexError(result.log);
       store.updateCardStatus(
         kickoff.id,
-        "waiting_user",
-        `Planning runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
+        "blocked",
+        `Planning runtime needs attention: ${errorSummary} The PM/Recovery flow should retry this planning card after the runtime is available again.`
       );
       body = `Planning heartbeat failed: ${errorSummary}`;
     } else if (plan && applied.createdCards > 0) {
@@ -493,8 +494,8 @@ async function executeAgentActiveCard(agentId: string) {
     const errorSummary = extractCodexError(result.log);
     store.updateCardStatus(
       activeCard.id,
-      "waiting_user",
-      `Kodeks runtime needs attention: ${errorSummary} Move this card back to In progress after the runtime is available again.`
+      "blocked",
+      `Kodeks runtime needs attention: ${errorSummary} PM/Recovery should retry this card after the runtime is available again.`
     );
   }
   store.createMessage({
@@ -509,7 +510,7 @@ async function executeAgentActiveCard(agentId: string) {
           : nextStatus === "waiting_supervisor"
             ? `Moved "${activeCard.title}" to Waiting for Supervisor.\n\n${statusSummary}`
             : `Completed "${activeCard.title}" and moved it to Done.\n\n${statusSummary}`
-        : `Moved "${activeCard.title}" to Waiting for Boss because the Kodeks runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
+        : `Moved "${activeCard.title}" to Blocked because the Kodeks runtime failed with exit ${result.exitCode}.\n\n${extractCodexError(result.log)}`,
     linkedCardId: activeCard.id
   });
 
@@ -540,7 +541,7 @@ async function runAssistantHeartbeat(companyId: string, options: { force: boolea
         ok: true as const,
         heartbeat: null,
         engine: null,
-        message: `Kodeks runtime is waiting on "${runtimeBlockedCard.title}". Move it back to In progress when the runtime is available.`
+        message: `Kodeks runtime is blocked on "${runtimeBlockedCard.title}". PM/Recovery should retry it when the runtime is available.`
       };
     }
 

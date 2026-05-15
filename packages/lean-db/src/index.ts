@@ -896,9 +896,10 @@ export class LeanStore {
       const startedAt = new Date().toISOString();
       const mine = byAssignee.get(node.id);
       const promotedForNode: string[] = [];
+      const activeCount = mine?.filter((c) => c.status === "in_progress").length ?? 0;
 
       if (mine?.length) {
-        const openSlots = Math.max(0, wipPerAssignee - mine.filter((c) => c.status === "in_progress").length);
+        const openSlots = Math.max(0, wipPerAssignee - activeCount);
         const backlog = mine
           .filter((c) => c.status === "backlog" || c.status === "planned")
           .sort((a, b) => a.title.localeCompare(b.title))
@@ -924,7 +925,9 @@ export class LeanStore {
         summary:
           promotedForNode.length > 0
             ? `Promoted ${promotedForNode.length} ready card(s) to In progress.`
-            : "Heartbeat completed; no ready card needed promotion."
+            : activeCount > 0
+              ? `Heartbeat found ${activeCount} active in-progress card(s); no promotion slot available.`
+              : "Heartbeat completed; no ready card needed promotion."
       };
       this.heartbeatRuns.set(run.id, run);
       runs.push(run);
@@ -956,8 +959,9 @@ export class LeanStore {
     const mine = cardsInCompany.filter((card) => card.assigneeOrgNodeId === node.id);
     const promotedForNode: string[] = [];
     const promoted: Array<{ cardId: string; assigneeHandle: string }> = [];
+    const activeCount = mine.filter((c) => c.status === "in_progress").length;
 
-    const openSlots = Math.max(0, wipPerAssignee - mine.filter((c) => c.status === "in_progress").length);
+    const openSlots = Math.max(0, wipPerAssignee - activeCount);
     const backlog = mine
       .filter((c) => c.status === "backlog" || c.status === "planned")
       .sort((a, b) => a.title.localeCompare(b.title))
@@ -981,7 +985,9 @@ export class LeanStore {
       summary:
         promotedForNode.length > 0
           ? `Promoted ${promotedForNode.length} ready card(s) to In progress.`
-          : "Heartbeat completed; no ready card needed promotion."
+          : activeCount > 0
+            ? `Heartbeat found ${activeCount} active in-progress card(s); no promotion slot available.`
+            : "Heartbeat completed; no ready card needed promotion."
     };
     this.heartbeatRuns.set(run.id, run);
     this.persist();
