@@ -5,6 +5,9 @@ node_modules/
 dist/
 ui/storybook-static/
 .env
+*service-account*.json
+Epub2EpubAgent.json
+OAuth Client ID JSON for AI Projects*.json
 *.tsbuildinfo
 drizzle/meta/
 .vite/
