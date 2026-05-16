@@ -7,13 +7,15 @@ import {
   type CardPriority,
   type Company,
   type CompanySettings,
+  type CommentAttachment,
   type DailyReport,
   type Escalation,
   type Goal,
   type HeartbeatRun,
   type OrgNode,
   type Role,
-  type CardStatus
+  type CardStatus,
+  type ValueCategory
 } from "@lean/shared";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -56,6 +58,14 @@ export type AssistantPlanJson = {
     dependencies?: string[];
     risks?: string[];
     requiredUserDecision?: string | null;
+    valueCategory?: string | null;
+    targetMetric?: string | null;
+    baseline?: string | null;
+    successThreshold?: string | null;
+    measurementMethod?: string | null;
+    expectedImpact?: number | string | null;
+    confidence?: number | string | null;
+    effort?: number | string | null;
   }>;
 };
 
@@ -86,6 +96,31 @@ function normalizeCardStatus(raw: string | undefined): CardStatus {
 function normalizeCardPriority(raw: string | undefined): CardPriority {
   if (raw === "critical" || raw === "high" || raw === "low") return raw;
   return "medium";
+}
+
+function normalizeValueCategory(raw: string | null | undefined): ValueCategory | null {
+  if (
+    raw === "acquisition" ||
+    raw === "activation" ||
+    raw === "retention" ||
+    raw === "revenue" ||
+    raw === "learning" ||
+    raw === "infrastructure"
+  ) {
+    return raw;
+  }
+  return null;
+}
+
+function normalizeValueScore(raw: number | string | null | undefined): number | null {
+  const n = typeof raw === "number" ? raw : Number.parseFloat(String(raw ?? ""));
+  if (!Number.isFinite(n)) return null;
+  return Math.min(5, Math.max(1, Math.round(n)));
+}
+
+function cleanOptionalText(raw: unknown, max = 500): string | null {
+  const text = String(raw ?? "").trim();
+  return text ? text.slice(0, max) : null;
 }
 
 export class LeanStore {
@@ -203,7 +238,7 @@ export class LeanStore {
         requiredUserDecision: item.requiredUserDecision ?? null
       });
     }
-    for (const item of snapshot.messages ?? []) this.messages.set(item.id, item);
+    for (const item of snapshot.messages ?? []) this.messages.set(item.id, { ...item, attachments: item.attachments ?? [] });
     for (const item of snapshot.escalations ?? []) this.escalations.set(item.id, item);
     for (const item of snapshot.heartbeatRuns ?? []) this.heartbeatRuns.set(item.id, item);
     for (const item of snapshot.dailyReports ?? []) this.dailyReports.set(item.id, item);
@@ -648,14 +683,23 @@ export class LeanStore {
       risks: input.risks ?? [],
       requiredUserDecision: input.requiredUserDecision ?? null,
       status: "backlog",
-      completionSummary: null
+      completionSummary: null,
+      valueCategory: input.valueCategory ?? null,
+      targetMetric: input.targetMetric ?? null,
+      baseline: input.baseline ?? null,
+      successThreshold: input.successThreshold ?? null,
+      measurementMethod: input.measurementMethod ?? null,
+      expectedImpact: input.expectedImpact ?? null,
+      confidence: input.confidence ?? null,
+      effort: input.effort ?? null,
+      evidence: input.evidence ?? null
     };
     this.cards.set(card.id, card);
     this.persist();
     return card;
   }
 
-  updateCardStatus(cardId: string, status: CardStatus, completionSummary?: string) {
+  updateCardStatus(cardId: string, status: CardStatus, completionSummary?: string, evidence?: string) {
     const card = this.cards.get(cardId);
     if (!card) throw new Error("Card not found");
     const next: BoardCard = {
@@ -664,7 +708,8 @@ export class LeanStore {
       completionSummary:
         status === "done" || status === "waiting_supervisor" || status === "waiting_user" || status === "blocked"
           ? completionSummary?.trim() || card.completionSummary || null
-          : card.completionSummary ?? null
+          : card.completionSummary ?? null,
+      evidence: evidence?.trim() || card.evidence || null
     };
     this.cards.set(card.id, next);
     this.persist();
@@ -680,13 +725,14 @@ export class LeanStore {
     return next;
   }
 
-  createMessage(input: Omit<ChannelMessage, "id" | "createdAt" | "mentions">) {
+  createMessage(input: Omit<ChannelMessage, "id" | "createdAt" | "mentions" | "attachments"> & { attachments?: CommentAttachment[] }) {
     const body = cleanConversationBody(input.body);
     const message: ChannelMessage = {
       id: uid(),
       createdAt: new Date().toISOString(),
       mentions: extractMentions(body),
       ...input,
+      attachments: input.attachments ?? [],
       body
     };
     this.messages.set(message.id, message);
@@ -846,7 +892,15 @@ export class LeanStore {
         goalId: goal?.id ?? null,
         dependencies: Array.isArray(card?.dependencies) ? card.dependencies.map((d) => String(d)).filter(Boolean).slice(0, 8) : [],
         risks: Array.isArray(card?.risks) ? card.risks.map((r) => String(r)).filter(Boolean).slice(0, 8) : [],
-        requiredUserDecision
+        requiredUserDecision,
+        valueCategory: normalizeValueCategory(card?.valueCategory),
+        targetMetric: cleanOptionalText(card?.targetMetric, 240),
+        baseline: cleanOptionalText(card?.baseline, 240),
+        successThreshold: cleanOptionalText(card?.successThreshold, 240),
+        measurementMethod: cleanOptionalText(card?.measurementMethod, 500),
+        expectedImpact: normalizeValueScore(card?.expectedImpact),
+        confidence: normalizeValueScore(card?.confidence),
+        effort: normalizeValueScore(card?.effort)
       });
       if (requiredUserDecision) {
         this.updateCardStatus(created.id, "waiting_user", requiredUserDecision);
@@ -1017,6 +1071,21 @@ export class LeanStore {
     for (const card of waiting) {
       const assignee = card.assigneeOrgNodeId ? this.orgNodes.get(card.assigneeOrgNodeId) : null;
       const isPlanningCard = assignee?.role === "planner" || card.title.includes("Generate autonomous project plan");
+      const hasValueHypothesis = Boolean(card.targetMetric?.trim() && card.measurementMethod?.trim() && card.successThreshold?.trim());
+      if (!isPlanningCard && !hasValueHypothesis) {
+        const summary =
+          "Supervisor rejected this as activity-only work. Add a target metric, measurement method, and success threshold before execution.";
+        this.updateCardStatus(card.id, "blocked", summary);
+        this.createMessage({
+          companyId,
+          threadId: "general",
+          authorType: "agent",
+          authorId: supervisor.id,
+          body: `Blocked "${card.title}". ${summary}`,
+          linkedCardId: card.id
+        });
+        continue;
+      }
       const nextStatus: CardStatus = isPlanningCard ? "done" : "planned";
       const summary = isPlanningCard
         ? "Supervisor approved the planning pass. The generated execution cards are ready for Developer heartbeats."
@@ -1079,6 +1148,12 @@ export class LeanStore {
     const needsBossCount = byStatus("waiting_user") + openEscalations.length;
     const blockedCount = byStatus("blocked");
     const reviewCount = byStatus("waiting_supervisor");
+    const valueLinked = cards.filter((card) => Boolean(card.targetMetric?.trim() && card.measurementMethod?.trim()));
+    const doneValueLinked = valueLinked.filter((card) => card.status === "done");
+    const doneWithEvidence = cards.filter((card) => card.status === "done" && Boolean(card.evidence?.trim() || card.completionSummary?.trim()));
+    const unmeasuredDone = cards.filter((card) => card.status === "done" && !card.targetMetric?.trim());
+    const evidencePct = cards.length ? Math.round((doneWithEvidence.length / cards.length) * 100) : 0;
+    const valuePct = valueLinked.length ? Math.round((doneValueLinked.length / valueLinked.length) * 100) : 0;
     const nextAction =
       needsBossCount > 0
         ? "Boss: answer the waiting decision(s) so execution can resume."
@@ -1086,15 +1161,19 @@ export class LeanStore {
           ? "PM/Supervisor: clear blocked work before expanding scope."
           : reviewCount > 0
             ? "Supervisor: validate waiting execution plans."
+            : unmeasuredDone.length > 0
+              ? "PM: review unmeasured closed work and convert learnings into value experiments."
             : nextMilestone
               ? `Team: continue ${nextMilestone.title}.`
-              : "Planning: create the next delivery slice.";
+              : "PM/Planning: create the next measurable value experiment.";
     const reportDate = new Date().toISOString().slice(0, 10);
     const body = [
       `PM report — ${company.name} (${reportDate})`,
       "",
       `Progress: ${byStatus("done")}/${cards.length} done (${pct}%). Active: ${byStatus("in_progress")} in progress, ${byStatus("planned")} planned.`,
-      nextMilestone ? `Main milestone: ${nextMilestone.title} (${nextMilestone.status}).` : "Main milestone: all tracked work is done; Planning should create the next delivery slice.",
+      `Value progress: ${doneValueLinked.length}/${valueLinked.length} value-linked card(s) done (${valuePct}%). Evidence coverage: ${doneWithEvidence.length}/${cards.length} card(s) (${evidencePct}%).`,
+      `Unmeasured done work: ${unmeasuredDone.length === 0 ? "none" : `${unmeasuredDone.length} card(s) closed without a target metric`}.`,
+      nextMilestone ? `Main milestone: ${nextMilestone.title} (${nextMilestone.status}).` : "Main milestone: all tracked work is done; PM/Planning should create the next measurable value experiment.",
       `Needs boss: ${needsBossCount === 0 ? "none" : `${needsBossCount} item(s)`}.`,
       `Blockers: ${blockedCount} blocked, ${reviewCount} waiting for Supervisor.`,
       `Next: ${nextAction}`

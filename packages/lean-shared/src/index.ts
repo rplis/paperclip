@@ -18,9 +18,13 @@ export type CardStatus = (typeof CARD_STATUS_VALUES)[number];
 export const CARD_PRIORITY_VALUES = ["critical", "high", "medium", "low"] as const;
 export type CardPriority = (typeof CARD_PRIORITY_VALUES)[number];
 
+export const VALUE_CATEGORY_VALUES = ["acquisition", "activation", "retention", "revenue", "learning", "infrastructure"] as const;
+export type ValueCategory = (typeof VALUE_CATEGORY_VALUES)[number];
+
 export const updateCardStatusSchema = z.object({
   status: z.enum(CARD_STATUS_VALUES),
-  completionSummary: z.string().trim().min(1).max(4000).optional()
+  completionSummary: z.string().trim().min(1).max(4000).optional(),
+  evidence: z.string().trim().max(4000).optional()
 });
 
 /** Per-agent markdown: same roles as agent.md, HEARTBEAT.md, SOUL.md, TOOLS.md on disk. */
@@ -94,6 +98,15 @@ export interface BoardCard {
   risks: string[];
   requiredUserDecision: string | null;
   completionSummary?: string | null;
+  valueCategory?: ValueCategory | null;
+  targetMetric?: string | null;
+  baseline?: string | null;
+  successThreshold?: string | null;
+  measurementMethod?: string | null;
+  expectedImpact?: number | null;
+  confidence?: number | null;
+  effort?: number | null;
+  evidence?: string | null;
 }
 
 export interface ChannelMessage {
@@ -103,8 +116,18 @@ export interface ChannelMessage {
   authorType: "user" | "agent" | "system";
   authorId: Id | null;
   body: string;
+  attachments: CommentAttachment[];
   mentions: string[];
   linkedCardId: Id | null;
+  createdAt: string;
+}
+
+export interface CommentAttachment {
+  id: Id;
+  filename: string;
+  contentType: string;
+  size: number;
+  storagePath: string;
   createdAt: string;
 }
 
@@ -204,17 +227,42 @@ export const createCardSchema = z.object({
   goalId: z.string().nullable(),
   dependencies: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
-  requiredUserDecision: z.string().trim().min(1).nullable().default(null)
+  requiredUserDecision: z.string().trim().min(1).nullable().default(null),
+  valueCategory: z.enum(VALUE_CATEGORY_VALUES).nullable().optional(),
+  targetMetric: z.string().trim().max(240).nullable().optional(),
+  baseline: z.string().trim().max(240).nullable().optional(),
+  successThreshold: z.string().trim().max(240).nullable().optional(),
+  measurementMethod: z.string().trim().max(500).nullable().optional(),
+  expectedImpact: z.coerce.number().min(1).max(5).nullable().optional(),
+  confidence: z.coerce.number().min(1).max(5).nullable().optional(),
+  effort: z.coerce.number().min(1).max(5).nullable().optional(),
+  evidence: z.string().trim().max(4000).nullable().optional()
 });
 
-export const createMessageSchema = z.object({
-  companyId: z.string().min(1),
-  threadId: z.string().min(1),
-  authorType: z.enum(["user", "agent", "system"]),
-  authorId: z.string().nullable(),
-  body: z.string().min(1),
-  linkedCardId: z.string().nullable()
-});
+export const createMessageSchema = z
+  .object({
+    companyId: z.string().min(1),
+    threadId: z.string().min(1),
+    authorType: z.enum(["user", "agent", "system"]),
+    authorId: z.string().nullable(),
+    body: z.string().default(""),
+    linkedCardId: z.string().nullable(),
+    attachments: z
+      .array(
+        z.object({
+          filename: z.string().min(1).max(240),
+          contentType: z.string().min(1).max(160),
+          size: z.number().int().nonnegative(),
+          dataBase64: z.string().min(1)
+        })
+      )
+      .max(6)
+      .default([])
+  })
+  .refine((value) => value.body.trim().length > 0 || value.attachments.length > 0, {
+    message: "Message body or attachment required",
+    path: ["body"]
+  });
 
 export const createEscalationSchema = z.object({
   companyId: z.string().min(1),

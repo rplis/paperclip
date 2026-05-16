@@ -6,6 +6,7 @@ import {
   type ChannelMessage,
   type Company,
   type CompanySettings,
+  type CommentAttachment,
   type DailyReport,
   type Escalation,
   type Goal,
@@ -54,6 +55,63 @@ interface InboxItem {
   at: string;
   failed?: boolean;
   sortMs: number;
+}
+
+type AttachmentUpload = {
+  filename: string;
+  contentType: string;
+  size: number;
+  dataBase64: string;
+};
+
+function bytesToLabel(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+async function fileToUpload(file: File): Promise<AttachmentUpload> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return {
+    filename: file.name,
+    contentType: file.type || "application/octet-stream",
+    size: file.size,
+    dataBase64: window.btoa(binary)
+  };
+}
+
+async function filesToUploads(files: File[]): Promise<AttachmentUpload[]> {
+  return Promise.all(files.slice(0, 6).map(fileToUpload));
+}
+
+function attachmentUrl(attachment: CommentAttachment): string {
+  return `${API}/attachments/${attachment.id}`;
+}
+
+function AttachmentList({ attachments }: { attachments: CommentAttachment[] }) {
+  if (!attachments.length) return null;
+  return (
+    <div className="attachmentList">
+      {attachments.map((attachment) => {
+        const isImage = attachment.contentType.startsWith("image/");
+        return (
+          <a key={attachment.id} className={`attachmentChip ${isImage ? "image" : ""}`} href={attachmentUrl(attachment)} target="_blank" rel="noreferrer">
+            {isImage ? <img src={attachmentUrl(attachment)} alt="" /> : <span className="attachmentIcon">file</span>}
+            <span className="attachmentMeta">
+              <strong>{attachment.filename}</strong>
+              <span>{bytesToLabel(attachment.size)}</span>
+            </span>
+          </a>
+        );
+      })}
+    </div>
+  );
 }
 
 function Icon({ children }: { children: React.ReactNode }) {
@@ -142,6 +200,14 @@ function parseBossSummary(summary: string): { ask: string; context: string } {
   return { ask: trimmed, context: "" };
 }
 
+function hasValueHypothesis(card: BoardCard): boolean {
+  return Boolean(card.targetMetric?.trim() && card.measurementMethod?.trim());
+}
+
+function scoreLabel(value: number | null | undefined): string {
+  return value ? `${value}/5` : "—";
+}
+
 function isStaleReviewNotice(message: ChannelMessage): boolean {
   return (
     (message.body.includes("Review requested for") || message.body.includes("were waiting for review"))
@@ -187,6 +253,7 @@ export function App() {
   const [agentFilesSaving, setAgentFilesSaving] = useState(false);
   const [newCard, setNewCard] = useState({ title: "", description: "", assigneeOrgNodeId: "" });
   const [newMessage, setNewMessage] = useState({ body: "" });
+  const [newMessageFiles, setNewMessageFiles] = useState<File[]>([]);
   const [messageSending, setMessageSending] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [newEscalation, setNewEscalation] = useState({ fromOrgNodeId: "", cardId: "", question: "", context: "" });
@@ -200,7 +267,9 @@ export function App() {
   const [completionSummary, setCompletionSummary] = useState("");
   const [completionSummaryError, setCompletionSummaryError] = useState<string | null>(null);
   const [cardComment, setCardComment] = useState("");
+  const [cardCommentFiles, setCardCommentFiles] = useState<File[]>([]);
   const [cardCommentSending, setCardCommentSending] = useState(false);
+  const [cardCommentError, setCardCommentError] = useState<string | null>(null);
   const [lastWorkspaceSyncAt, setLastWorkspaceSyncAt] = useState<number | null>(null);
   const [settingsDraft, setSettingsDraft] = useState({
     heartbeatIntervalMinutes: "10",
@@ -236,6 +305,8 @@ export function App() {
     setCompletionSummary("");
     setCompletionSummaryError(null);
     setCardComment("");
+    setCardCommentFiles([]);
+    setCardCommentError(null);
   }, [boardDetailCardId]);
 
   const channelIds = useMemo(() => {
@@ -535,10 +606,12 @@ export function App() {
   }
 
   async function postCardComment(card: BoardCard) {
-    if (!bootstrap || !cardComment.trim()) return;
+    if (!bootstrap || (!cardComment.trim() && cardCommentFiles.length === 0)) return;
     setCardCommentSending(true);
+    setCardCommentError(null);
     try {
-      await fetch(`${API}/messages`, {
+      const attachments = await filesToUploads(cardCommentFiles);
+      const response = await fetch(`${API}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -547,21 +620,30 @@ export function App() {
           authorType: "user",
           authorId: null,
           body: cardComment.trim(),
-          linkedCardId: card.id
+          linkedCardId: card.id,
+          attachments
         })
       });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? `Comment failed with ${response.status}`);
+      }
       setCardComment("");
+      setCardCommentFiles([]);
       await load(bootstrap.company.id);
+    } catch (error) {
+      setCardCommentError(error instanceof Error ? error.message : "Comment failed to send.");
     } finally {
       setCardCommentSending(false);
     }
   }
 
   async function postChannelMessage() {
-    if (!bootstrap || !newMessage.body.trim()) return;
+    if (!bootstrap || (!newMessage.body.trim() && newMessageFiles.length === 0)) return;
     setMessageSending(true);
     setMessageError(null);
     try {
+      const attachments = await filesToUploads(newMessageFiles);
       const response = await fetch(`${API}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -571,7 +653,8 @@ export function App() {
           authorType: "user",
           authorId: null,
           body: newMessage.body.trim(),
-          linkedCardId: null
+          linkedCardId: null,
+          attachments
         })
       });
       if (!response.ok) {
@@ -579,6 +662,7 @@ export function App() {
         throw new Error(data?.error ?? `Message failed with ${response.status}`);
       }
       setNewMessage({ body: "" });
+      setNewMessageFiles([]);
       await load(bootstrap.company.id);
     } catch (error) {
       setMessageError(error instanceof Error ? error.message : "Message failed to send.");
@@ -700,8 +784,29 @@ export function App() {
   }, [bootstrap?.company.id, load]);
 
   const dashStats = useMemo(() => {
-    if (!bootstrap) return { total: 0, backlog: 0, planned: 0, inProgress: 0, waitingUser: 0, waitingSupervisor: 0, blocked: 0, done: 0, team: 0 };
+    if (!bootstrap)
+      return {
+        total: 0,
+        backlog: 0,
+        planned: 0,
+        inProgress: 0,
+        waitingUser: 0,
+        waitingSupervisor: 0,
+        blocked: 0,
+        done: 0,
+        team: 0,
+        valueLinked: 0,
+        valueLinkedDone: 0,
+        unmeasuredDone: 0,
+        evidenceDone: 0,
+        valueProgressPct: 0,
+        evidenceCoveragePct: 0
+      };
     const cards = bootstrap.cards;
+    const valueLinked = cards.filter(hasValueHypothesis);
+    const valueLinkedDone = valueLinked.filter((c) => c.status === "done");
+    const unmeasuredDone = cards.filter((c) => c.status === "done" && !hasValueHypothesis(c));
+    const evidenceDone = cards.filter((c) => c.status === "done" && Boolean(c.evidence?.trim() || c.completionSummary?.trim()));
     return {
       total: cards.length,
       backlog: cards.filter((c) => c.status === "backlog").length,
@@ -711,7 +816,13 @@ export function App() {
       waitingSupervisor: cards.filter((c) => c.status === "waiting_supervisor").length,
       blocked: cards.filter((c) => c.status === "blocked").length,
       done: cards.filter((c) => c.status === "done").length,
-      team: bootstrap.org.length
+      team: bootstrap.org.length,
+      valueLinked: valueLinked.length,
+      valueLinkedDone: valueLinkedDone.length,
+      unmeasuredDone: unmeasuredDone.length,
+      evidenceDone: evidenceDone.length,
+      valueProgressPct: valueLinked.length ? Math.round((valueLinkedDone.length / valueLinked.length) * 100) : 0,
+      evidenceCoveragePct: cards.length ? Math.round((evidenceDone.length / cards.length) * 100) : 0
     };
   }, [bootstrap]);
 
@@ -735,6 +846,22 @@ export function App() {
       .slice(0, 8);
   }, [bootstrap]);
   const latestHeartbeatRuns = bootstrap?.heartbeatRuns.slice(0, 8) ?? [];
+  const valueCards = useMemo(() => {
+    if (!bootstrap) return [];
+    const statusRank: Record<BoardCard["status"], number> = {
+      in_progress: 0,
+      waiting_supervisor: 1,
+      waiting_user: 2,
+      blocked: 3,
+      planned: 4,
+      backlog: 5,
+      done: 6
+    };
+    return [...bootstrap.cards]
+      .filter((card) => hasValueHypothesis(card))
+      .sort((a, b) => statusRank[a.status] - statusRank[b.status] || (b.expectedImpact ?? 0) - (a.expectedImpact ?? 0) || a.title.localeCompare(b.title))
+      .slice(0, 6);
+  }, [bootstrap]);
 
   const plannerKickoffCard = useMemo(() => {
     if (!bootstrap) return null;
@@ -1155,20 +1282,37 @@ export function App() {
                           <span className="muted">{new Date(m.createdAt).toLocaleString()}</span>
                         </div>
                         <div className="channelMsgBody">{m.body}</div>
+                        <AttachmentList attachments={m.attachments} />
                       </div>
                     );
                   })}
                 </div>
                 <div className="channelComposer">
-                  <textarea
-                    placeholder={`Message in ${threadNavTitle(activeChannelId)} (as @${OPERATOR_HANDLE})…`}
-                    value={newMessage.body}
-                    onChange={(e) => {
-                      setNewMessage({ body: e.target.value });
-                      if (messageError) setMessageError(null);
-                    }}
-                  />
-                  <button type="button" className="btnPrimary" disabled={messageSending || !newMessage.body.trim()} onClick={() => void postChannelMessage()}>
+                  <div className="composerStack">
+                    <textarea
+                      placeholder={`Message in ${threadNavTitle(activeChannelId)} (as @${OPERATOR_HANDLE})…`}
+                      value={newMessage.body}
+                      onChange={(e) => {
+                        setNewMessage({ body: e.target.value });
+                        if (messageError) setMessageError(null);
+                      }}
+                    />
+                    <div className="composerFiles">
+                      <label className="attachButton">
+                        Attach files
+                        <input
+                          type="file"
+                          multiple
+                          onChange={(e) => {
+                            setNewMessageFiles(Array.from(e.target.files ?? []).slice(0, 6));
+                            e.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                      {newMessageFiles.length ? <span className="muted small">{newMessageFiles.map((file) => file.name).join(", ")}</span> : null}
+                    </div>
+                  </div>
+                  <button type="button" className="btnPrimary" disabled={messageSending || (!newMessage.body.trim() && newMessageFiles.length === 0)} onClick={() => void postChannelMessage()}>
                     {messageSending ? "Sending…" : "Send"}
                   </button>
                 </div>
@@ -1306,6 +1450,53 @@ export function App() {
                   </div>
                 </div>
 
+                <div className="panelBlock valueProgressPanel">
+                  <div className="panelHead">
+                    <h2>Value progress</h2>
+                    <span className="muted small">Owned by PM</span>
+                  </div>
+                  <div className="valueMetricGrid">
+                    <div>
+                      <span className="muted small">Value-linked done</span>
+                      <strong>{dashStats.valueLinkedDone}/{dashStats.valueLinked}</strong>
+                      <span className="muted small">{dashStats.valueProgressPct}%</span>
+                    </div>
+                    <div>
+                      <span className="muted small">Evidence coverage</span>
+                      <strong>{dashStats.evidenceDone}/{dashStats.total}</strong>
+                      <span className="muted small">{dashStats.evidenceCoveragePct}%</span>
+                    </div>
+                    <div>
+                      <span className="muted small">Unmeasured done</span>
+                      <strong>{dashStats.unmeasuredDone}</strong>
+                      <span className="muted small">closed without metric</span>
+                    </div>
+                    <div>
+                      <span className="muted small">Boss blockers</span>
+                      <strong>{dashStats.waitingUser}</strong>
+                      <span className="muted small">strategic/access items</span>
+                    </div>
+                  </div>
+                  {dashStats.done > 0 && dashStats.valueLinkedDone === 0 ? (
+                    <p className="valueWarning">Tasks are closing, but PM has no measured value progress yet.</p>
+                  ) : null}
+                  {valueCards.length ? (
+                    <div className="valueCardList">
+                      {valueCards.map((card) => (
+                        <button key={card.id} type="button" className="valueCardRow" onClick={() => setBoardDetailCardId(card.id)}>
+                          <span>
+                            <strong>{card.targetMetric}</strong>
+                            <small>{card.title}</small>
+                          </span>
+                          <span className="muted small">{boardStatusLabel(card.status)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No value-linked cards yet. PM should ask Planning for measurable experiments before more execution.</p>
+                  )}
+                </div>
+
                 <div className="panelBlock">
                   <div className="panelHead">
                     <h2>Main milestones</h2>
@@ -1398,6 +1589,7 @@ export function App() {
                           >
                             <div className="trelloCardTitle">{card.title}</div>
                             <div className="trelloCardSnippet">{cardDescSnippet(card.description)}</div>
+                            {hasValueHypothesis(card) ? <div className="trelloValueMetric">{card.targetMetric}</div> : null}
                             <div className="trelloCardMeta">
                               {assignee ? (
                                 <>
@@ -1476,6 +1668,45 @@ export function App() {
                       ))}
                     </select>
                   </div>
+                  {hasValueHypothesis(boardDetailCard) ||
+                  boardDetailCard.valueCategory ||
+                  boardDetailCard.successThreshold ||
+                  boardDetailCard.baseline ||
+                  boardDetailCard.expectedImpact ||
+                  boardDetailCard.confidence ||
+                  boardDetailCard.effort ? (
+                    <div className="cardModalSection valueHypothesisBox">
+                      <div className="muted cardModalK">Value hypothesis</div>
+                      <div className="valueRows">
+                        <div>
+                          <span>Category</span>
+                          <strong>{boardDetailCard.valueCategory ?? "—"}</strong>
+                        </div>
+                        <div>
+                          <span>Target metric</span>
+                          <strong>{boardDetailCard.targetMetric ?? "—"}</strong>
+                        </div>
+                        <div>
+                          <span>Baseline</span>
+                          <strong>{boardDetailCard.baseline ?? "—"}</strong>
+                        </div>
+                        <div>
+                          <span>Success threshold</span>
+                          <strong>{boardDetailCard.successThreshold ?? "—"}</strong>
+                        </div>
+                        <div>
+                          <span>Measurement</span>
+                          <strong>{boardDetailCard.measurementMethod ?? "—"}</strong>
+                        </div>
+                        <div>
+                          <span>Impact / confidence / effort</span>
+                          <strong>
+                            {scoreLabel(boardDetailCard.expectedImpact)} / {scoreLabel(boardDetailCard.confidence)} / {scoreLabel(boardDetailCard.effort)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   {closingCardId === boardDetailCard.id ? (
                     <div className="cardModalSection closeSummaryBlock">
                       <label className="muted cardModalK" htmlFor="completion-summary">
@@ -1528,6 +1759,12 @@ export function App() {
                       )}
                     </div>
                   ) : null}
+                  {boardDetailCard.evidence ? (
+                    <div className="cardModalSection">
+                      <div className="muted cardModalK">Evidence</div>
+                      <div className="cardModalDesc">{boardDetailCard.evidence}</div>
+                    </div>
+                  ) : null}
                   <div className="cardModalSection">
                     <div className="muted cardModalK">Conversation</div>
                     <div className="cardThread">
@@ -1548,25 +1785,47 @@ export function App() {
                                 <span className="muted">{new Date(message.createdAt).toLocaleString()}</span>
                               </div>
                               <div className="channelMsgBody">{message.body}</div>
+                              <AttachmentList attachments={message.attachments} />
                             </div>
                           );
                         })}
                     </div>
                     <div className="channelComposer cardComposer">
-                      <textarea
-                        placeholder="Reply on this task…"
-                        value={cardComment}
-                        onChange={(e) => setCardComment(e.target.value)}
-                      />
+                      <div className="composerStack">
+                        <textarea
+                          placeholder="Reply on this task…"
+                          value={cardComment}
+                          onChange={(e) => {
+                            setCardComment(e.target.value);
+                            if (cardCommentError) setCardCommentError(null);
+                          }}
+                        />
+                        <div className="composerFiles">
+                          <label className="attachButton">
+                            Attach files
+                            <input
+                              type="file"
+                              multiple
+                              onChange={(e) => {
+                                setCardCommentFiles(Array.from(e.target.files ?? []).slice(0, 6));
+                                e.currentTarget.value = "";
+                                if (cardCommentError) setCardCommentError(null);
+                              }}
+                            />
+                          </label>
+                          {cardCommentFiles.length ? <span className="muted small">{cardCommentFiles.map((file) => file.name).join(", ")}</span> : null}
+                        </div>
+                      </div>
                       <button
                         type="button"
                         className="btnPrimary"
-                        disabled={cardCommentSending || !cardComment.trim()}
+                        disabled={cardCommentSending || (!cardComment.trim() && cardCommentFiles.length === 0)}
                         onClick={() => void postCardComment(boardDetailCard)}
                       >
                         {cardCommentSending ? "Sending…" : "Comment"}
                       </button>
                     </div>
+                    {cardCommentError ? <p className="composerError cardComposerError">{cardCommentError}</p> : null}
                   </div>
                 </div>
               </div>

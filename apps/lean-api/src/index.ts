@@ -1,5 +1,8 @@
 import cors from "cors";
 import express from "express";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { store } from "@lean/db";
 import {
   dmThreadId,
@@ -18,6 +21,44 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const MAX_COMMENT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const COMMENT_ATTACHMENT_DIR = process.env.LEAN_ATTACHMENT_DIR ?? join(process.cwd(), "data", "lean-attachments");
+
+type IncomingAttachment = {
+  filename: string;
+  contentType: string;
+  size: number;
+  dataBase64: string;
+};
+
+function safeAttachmentFilename(filename: string) {
+  const base = basename(filename).replace(/[^\w.\- ()]/g, "_").trim();
+  return base || "attachment";
+}
+
+function persistMessageAttachments(companyId: string, attachments: IncomingAttachment[]) {
+  if (attachments.length > 6) throw new Error("Maximum 6 attachments per comment.");
+  return attachments.map((attachment) => {
+    if (attachment.size > MAX_COMMENT_ATTACHMENT_BYTES) throw new Error(`Attachment "${attachment.filename}" exceeds 20 MB.`);
+    const bytes = Buffer.from(attachment.dataBase64, "base64");
+    if (bytes.byteLength !== attachment.size) throw new Error(`Attachment "${attachment.filename}" could not be decoded.`);
+    const id = randomUUID();
+    const filename = safeAttachmentFilename(attachment.filename);
+    const dir = join(COMMENT_ATTACHMENT_DIR, companyId);
+    mkdirSync(dir, { recursive: true });
+    const storagePath = join(dir, `${id}-${filename}`);
+    writeFileSync(storagePath, bytes);
+    return {
+      id,
+      filename,
+      contentType: attachment.contentType || "application/octet-stream",
+      size: bytes.byteLength,
+      storagePath,
+      createdAt: new Date().toISOString()
+    };
+  });
+}
+
 function buildAssistantPlanPrompt(projectName: string, goalText: string, kickoff: { title: string; description: string }) {
   return `You are the Planning Agent for project "${projectName}". You run on the Kodeks/Codex execution engine inside an autonomous project team.
 
@@ -29,15 +70,15 @@ Title: ${kickoff.title}
 Description:
 ${kickoff.description}
 
-Create a detailed implementation plan and publish it as Kanban cards. Include milestones, tasks/subtasks, dependencies, priorities, execution order, required boss decisions, and risks.
+Create a detailed implementation plan and publish it as Kanban cards. Include milestones, tasks/subtasks, dependencies, priorities, execution order, required boss decisions, risks, and a measurable value hypothesis for every execution card.
 
 Deliver a concise written plan. If the goal is missing a required human decision, ask @boss in the narrative and include a card that captures the blocker.
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
 \`\`\`json
-{"cards":[{"title":"Example planning card - replace with real work","description":"Describe one concrete task that advances this specific project goal.","priority":"high","dependencies":[],"risks":["Example risk"],"requiredUserDecision":null}]}
+{"cards":[{"title":"Example planning card - replace with real work","description":"Describe one concrete task that advances this specific project goal.","priority":"high","dependencies":[],"risks":["Example risk"],"requiredUserDecision":null,"valueCategory":"activation","targetMetric":"First meaningful action completion rate","baseline":"unknown; measure before change","successThreshold":"+10% relative improvement or clear qualitative learning","measurementMethod":"Compare analytics/session evidence before and after the change","expectedImpact":4,"confidence":3,"effort":2}]}
 \`\`\`
-Rules: Max 16 cards. Use only this agent model: Supervisor, PM, Planning, Developer, Recovery. PM owns goal delivery tracking, milestones, and daily progress reporting. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action.`;
+Rules: Max 16 cards. Use only this agent model: Supervisor, PM, Planning, Developer, Recovery. PM owns value delivery, outcome metrics, milestones, and daily progress reporting. Boss owns the strategic goal, API keys, access, budget, approvals, positioning, and other high-leverage decisions. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action. Every non-blocker card must include valueCategory, targetMetric, baseline, successThreshold, measurementMethod, expectedImpact, confidence, and effort.`;
 }
 
 function buildAgentTaskPrompt(input: {
@@ -48,6 +89,7 @@ function buildAgentTaskPrompt(input: {
   role: string;
   cardTitle: string;
   cardDescription: string;
+  cardValueContext: string;
   cardConversation: string;
   agentMd: string;
   heartbeatMd: string;
@@ -63,6 +105,9 @@ Current assigned card:
 Title: ${input.cardTitle}
 Description:
 ${input.cardDescription || "(no description)"}
+
+Value hypothesis:
+${input.cardValueContext || "(no value hypothesis recorded; create one or ask Supervisor/PM to replan before activity-only work)"}
 
 Task conversation:
 ${input.cardConversation || "(no linked task conversation yet)"}
@@ -82,7 +127,8 @@ ${input.toolsMd}
 Do the smallest useful unit of work for this card now. Return a concise progress note with:
 1. What you did or decided.
 2. Evidence or output for review.
-3. Remaining blocker or next step.
+3. Metric/result note for PM.
+4. Remaining blocker or next step.
 
 Autonomy rules:
 - Try to solve the task with available context before asking @boss.
@@ -94,7 +140,7 @@ Do not invent external state. If you truly need @boss before continuing, make th
 
 IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use this shape:
 \`\`\`json
-{"status":"done","summary":"What was completed and what evidence exists.","bossAsk":""}
+{"status":"done","summary":"What was completed and how it relates to the target metric.","evidence":"Reviewable artifact, observation, link, measurement, or clear learning.","bossAsk":""}
 \`\`\`
 If you need @boss before continuing, use \`"status":"waiting_user"\` only when there is no safe autonomous workaround. Put one precise request in \`bossAsk\` using this format: "I need <specific decision/access/artifact>. Reason: <why it blocks the next step>. Default if no preference: <safe default>." Keep \`summary\` focused on evidence already gathered.
 If you need Supervisor validation before execution, use \`"status":"waiting_supervisor"\` and summarize the execution plan.`;
@@ -114,6 +160,7 @@ type AssistantPlanCodexResult =
 type AssistantTaskResult = {
   status: "done" | "waiting_user" | "waiting_supervisor";
   summary: string;
+  evidence: string;
   bossAsk: string;
 };
 
@@ -136,6 +183,7 @@ function extractAssistantTaskResult(logLines: string[]): AssistantTaskResult | n
       return {
         status,
         summary: String(parsed.summary ?? "").trim(),
+        evidence: String(parsed.evidence ?? "").trim(),
         bossAsk: String(parsed.bossAsk ?? "").trim()
       };
     } catch {
@@ -222,6 +270,20 @@ function buildCardConversation(cardId: string, companyId: string) {
       return `[${new Date(message.createdAt).toISOString()}] @${author}: ${compact}`;
     })
     .join("\n\n");
+}
+
+function buildCardValueContext(card: { valueCategory?: string | null; targetMetric?: string | null; baseline?: string | null; successThreshold?: string | null; measurementMethod?: string | null; expectedImpact?: number | null; confidence?: number | null; effort?: number | null }) {
+  const lines = [
+    card.valueCategory ? `Category: ${card.valueCategory}` : "",
+    card.targetMetric ? `Target metric: ${card.targetMetric}` : "",
+    card.baseline ? `Baseline: ${card.baseline}` : "",
+    card.successThreshold ? `Success threshold: ${card.successThreshold}` : "",
+    card.measurementMethod ? `Measurement method: ${card.measurementMethod}` : "",
+    card.expectedImpact ? `Expected impact: ${card.expectedImpact}/5` : "",
+    card.confidence ? `Confidence: ${card.confidence}/5` : "",
+    card.effort ? `Effort: ${card.effort}/5` : ""
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function latestUserCommentMs(cardId: string, companyId: string) {
@@ -409,7 +471,7 @@ function createContinuationPlanningCard(companyId: string, plannerId: string) {
     companyId,
     title: "Generate autonomous project plan - continuation",
     description:
-      "All current execution cards are done. Re-read the project goal, previous task outputs, and conversations, then generate the next day-by-day traffic-growth tasks. Focus on actions that move epubtoepub.com toward qualified traffic and 10k MRR over time.",
+      "All current execution cards are done. Re-read the project goal, previous task outputs, PM reports, and conversations, then generate the next measurable value experiment. Focus on actions that move the declared business goal through acquisition, activation, retention, revenue, or learning rather than generic activity.",
     priority: "high",
     assigneeOrgNodeId: plannerId,
     goalId: company.goalId,
@@ -454,10 +516,11 @@ async function executeAgentActiveCard(agentId: string) {
       agentName: agent.name,
       agentHandle: agent.handle,
       role: agent.role,
-        cardTitle: activeCard.title,
-        cardDescription: activeCard.description,
-        cardConversation: buildCardConversation(activeCard.id, agent.companyId),
-        agentMd: agent.files.agentMd,
+      cardTitle: activeCard.title,
+      cardDescription: activeCard.description,
+      cardValueContext: buildCardValueContext(activeCard),
+      cardConversation: buildCardConversation(activeCard.id, agent.companyId),
+      agentMd: agent.files.agentMd,
       heartbeatMd: agent.files.heartbeatMd,
       soulMd: agent.files.soulMd,
       toolsMd: agent.files.toolsMd
@@ -467,6 +530,7 @@ async function executeAgentActiveCard(agentId: string) {
   const preview = withoutNoise.length > 1400 ? `${withoutNoise.slice(0, 1400)}...` : withoutNoise;
   const taskResult = result.exitCode === 0 ? extractAssistantTaskResult(result.log) : null;
   const summary = taskResult?.summary || preview || "Heartbeat completed the assigned task.";
+  const evidence = taskResult?.evidence || "";
   const needsUser = result.exitCode === 0 && inferBossDependency(activeCard.title, activeCard.description, taskResult);
   const invalidBossEscalation = result.exitCode === 0 && taskResult?.status === "waiting_user" && !needsUser;
   const nextStatus =
@@ -479,7 +543,7 @@ async function executeAgentActiveCard(agentId: string) {
         : summary;
 
   if (result.exitCode === 0) {
-    store.updateCardStatus(activeCard.id, nextStatus, statusSummary);
+    store.updateCardStatus(activeCard.id, nextStatus, statusSummary, evidence);
     if (needsUser) {
       store.createMessage({
         companyId: agent.companyId,
@@ -744,7 +808,7 @@ app.patch("/api/cards/:cardId/status", (req, res) => {
     if (parsed.data.status === "done" && existing.status !== "done" && !parsed.data.completionSummary?.trim()) {
       return res.status(400).json({ error: "Closing a task requires a completion summary." });
     }
-    const card = store.updateCardStatus(req.params.cardId, parsed.data.status, parsed.data.completionSummary);
+    const card = store.updateCardStatus(req.params.cardId, parsed.data.status, parsed.data.completionSummary, parsed.data.evidence);
     if (parsed.data.status === "in_progress" && (existing.status === "waiting_user" || existing.status === "blocked") && card.assigneeOrgNodeId) {
       store.markAgentDueNow(card.assigneeOrgNodeId);
     }
@@ -767,10 +831,27 @@ app.patch("/api/cards/:cardId/status", (req, res) => {
 });
 
 app.post("/api/messages", (req, res) => {
-  const input = createMessageSchema.parse(req.body);
-  const message = store.createMessage(input);
-  const actionCard = store.createActionCardFromMessage(message);
-  res.status(201).json({ message, actionCard });
+  try {
+    const input = createMessageSchema.parse(req.body);
+    const { attachments, ...messageInput } = input;
+    const savedAttachments = persistMessageAttachments(input.companyId, attachments);
+    const message = store.createMessage({ ...messageInput, body: messageInput.body.trim(), attachments: savedAttachments });
+    const actionCard = store.createActionCardFromMessage(message);
+    res.status(201).json({ message, actionCard });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Invalid message" });
+  }
+});
+
+app.get("/api/attachments/:attachmentId", (req, res) => {
+  const attachment = [...store.messages.values()].flatMap((message) => message.attachments).find((item) => item.id === req.params.attachmentId);
+  if (!attachment || !existsSync(attachment.storagePath)) {
+    res.status(404).json({ error: "Attachment not found" });
+    return;
+  }
+  res.setHeader("Content-Type", attachment.contentType);
+  res.setHeader("Content-Disposition", `inline; filename="${attachment.filename.replace(/"/g, "")}"`);
+  res.sendFile(attachment.storagePath);
 });
 
 app.get("/api/inbox/:companyId/:handle", (req, res) => {
