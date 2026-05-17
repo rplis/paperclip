@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export type Id = string;
 
-export type Role = "supervisor" | "pm" | "planner" | "developer" | "recovery" | "operator" | "custom";
+export type Role = "supervisor" | "pm" | "product_owner" | "planner" | "developer" | "recovery" | "operator" | "custom";
 
 export const CARD_STATUS_VALUES = [
   "backlog",
@@ -197,7 +197,7 @@ export const createOrgNodeSchema = z.object({
   actorOrgNodeId: z.string().min(1).nullable(),
   name: z.string().min(1),
   handle: z.string().min(1),
-  role: z.enum(["supervisor", "pm", "planner", "developer", "recovery", "operator", "custom"]),
+  role: z.enum(["supervisor", "pm", "product_owner", "planner", "developer", "recovery", "operator", "custom"]),
   reportsToId: z.string().nullable(),
   subtreeSkillsManifest: z.array(z.string()).default([]),
   agentMd: z.string().optional(),

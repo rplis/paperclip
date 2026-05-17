@@ -24,6 +24,7 @@ import {
   defaultDeveloperMarkdownPack,
   defaultPlannerMarkdownPack,
   defaultPmMarkdownPack,
+  defaultProductOwnerMarkdownPack,
   defaultRecoveryMarkdownPack,
   defaultSupervisorMarkdownPack,
   mergeAgentPack
@@ -252,14 +253,14 @@ export class LeanStore {
   }
 
   private ensureProjectAgentTeam(company: Company) {
-    const allowedRoles = new Set(["supervisor", "pm", "planner", "developer", "recovery", "operator", "custom"]);
+    const allowedRoles = new Set(["supervisor", "pm", "product_owner", "planner", "developer", "recovery", "operator", "custom"]);
     const before = [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
     const legacyIds = new Set(before.filter((node) => !allowedRoles.has(node.role) || ["assistant", "ceo", "hiring"].includes(node.handle)).map((node) => node.id));
     for (const id of legacyIds) this.orgNodes.delete(id);
 
     const existing = () => [...this.orgNodes.values()].filter((node) => node.companyId === company.id);
     const makeNode = (
-      role: Extract<Role, "supervisor" | "pm" | "planner" | "developer" | "recovery">,
+      role: Extract<Role, "supervisor" | "pm" | "product_owner" | "planner" | "developer" | "recovery">,
       name: string,
       handle: string,
       reportsToId: string | null,
@@ -303,13 +304,21 @@ export class LeanStore {
       ["strategic-alignment", "risk-review", "approval-gates"],
       defaultSupervisorMarkdownPack(company.name)
     );
-    makeNode(
+    const pm = makeNode(
       "pm",
       "PM Agent",
       "pm",
       supervisor.id,
       ["goal-delivery", "milestones", "daily-reporting", "progress-tracking"],
       defaultPmMarkdownPack(company.name)
+    );
+    const productOwner = makeNode(
+      "product_owner",
+      "Product Owner Agent",
+      "product",
+      supervisor.id,
+      ["customer-segmentation", "positioning", "channel-strategy", "experiment-selection"],
+      defaultProductOwnerMarkdownPack(company.name)
     );
     const planner = makeNode(
       "planner",
@@ -340,12 +349,43 @@ export class LeanStore {
       if (card.companyId !== company.id) continue;
       const shouldReassign = card.assigneeOrgNodeId == null || legacyIds.has(card.assigneeOrgNodeId) || !this.orgNodes.has(card.assigneeOrgNodeId);
       const isPlanningCard = card.title.includes("Create the project plan") || card.title.includes("Generate autonomous project plan");
+      const isProductDecision = this.isProductDecisionCard(card);
+      const isPmOwned = this.isPmOwnedCard(card);
       this.cards.set(id, {
         ...card,
         title: card.title.includes("Create the project plan") ? "Generate autonomous project plan" : card.title,
-        assigneeOrgNodeId: shouldReassign ? (isPlanningCard ? planner.id : developer.id) : card.assigneeOrgNodeId
+        status: (isProductDecision || isPmOwned) && card.status === "waiting_user" ? "planned" : card.status,
+        completionSummary:
+          isProductDecision && card.status === "waiting_user"
+            ? "Routed to Product Owner: this is a product/customer-segment decision, not a Boss blocker."
+            : isPmOwned && card.status === "waiting_user"
+              ? "Routed to PM: this is delivery/community/value work, not a Boss blocker."
+            : card.completionSummary,
+        assigneeOrgNodeId: isProductDecision
+          ? productOwner.id
+          : isPmOwned
+            ? pm.id
+            : shouldReassign
+              ? isPlanningCard
+                ? planner.id
+                : developer.id
+              : card.assigneeOrgNodeId
       });
     }
+  }
+
+  private isProductDecisionCard(card: Pick<BoardCard, "title" | "description" | "completionSummary">) {
+    const text = `${card.title}\n${card.description}\n${card.completionSummary ?? ""}`;
+    return /target customer|customer segment|audience focus|positioning|channel priorit|channel focus|offer framing|persona|first segment|which segment|choose .*segment|choose .*audience|language pair|language-pair|translation route|top .*pairs|boss-approved pairs|confirm .*pairs|prioriti[sz]e .*pairs/i.test(
+      text
+    );
+  }
+
+  private isPmOwnedCard(card: Pick<BoardCard, "title" | "description" | "completionSummary">) {
+    const text = `${card.title}\n${card.description}\n${card.completionSummary ?? ""}`;
+    return /(^|\b)pm\s+(drafts?|creates?|writes?|prepares?|reviews?|reports?|routes?|prioriti[sz]es?|tracks?|maintains?)|pm-owned|delivery report|growth review|next sprint recommendation|community posts?|feedback requests?|route interested users|non-spam community|milestone review|value assessment/i.test(
+      text
+    );
   }
 
   private sanitizeVisibleEngineNames() {
@@ -468,6 +508,17 @@ export class LeanStore {
       reportsToId: supervisor.id,
       subtreeSkillsManifest: ["goal-delivery", "milestones", "daily-reporting", "progress-tracking"],
       ...defaultPmMarkdownPack(company.name)
+    });
+
+    this.createOrgNode({
+      actorOrgNodeId: supervisor.id,
+      companyId: company.id,
+      name: "Product Owner Agent",
+      handle: "product",
+      role: "product_owner",
+      reportsToId: supervisor.id,
+      subtreeSkillsManifest: ["customer-segmentation", "positioning", "channel-strategy", "experiment-selection"],
+      ...defaultProductOwnerMarkdownPack(company.name)
     });
 
     const planner = this.createOrgNode({
@@ -605,11 +656,13 @@ export class LeanStore {
         ? defaultSupervisorMarkdownPack(companyName)
         : input.role === "pm"
           ? defaultPmMarkdownPack(companyName)
-          : input.role === "planner"
-            ? defaultPlannerMarkdownPack(companyName)
-            : input.role === "recovery"
-              ? defaultRecoveryMarkdownPack(companyName)
-              : defaultDeveloperMarkdownPack(companyName, input.name, handleLc, managerHandle);
+          : input.role === "product_owner"
+            ? defaultProductOwnerMarkdownPack(companyName)
+            : input.role === "planner"
+              ? defaultPlannerMarkdownPack(companyName)
+              : input.role === "recovery"
+                ? defaultRecoveryMarkdownPack(companyName)
+                : defaultDeveloperMarkdownPack(companyName, input.name, handleLc, managerHandle);
     const files = mergeAgentPack(baseFiles, {
       agentMd: input.agentMd,
       heartbeatMd: input.heartbeatMd,
@@ -857,6 +910,8 @@ export class LeanStore {
       return { createdCards, errors };
     }
     const developer = [...this.orgNodes.values()].find((node) => node.companyId === companyId && node.role === "developer") ?? planner;
+    const pm = [...this.orgNodes.values()].find((node) => node.companyId === companyId && node.role === "pm") ?? developer;
+    const productOwner = [...this.orgNodes.values()].find((node) => node.companyId === companyId && node.role === "product_owner") ?? developer;
     const goal = [...this.goals.values()].find((g) => g.companyId === companyId) ?? null;
     const existingTitles = new Set(
       [...this.cards.values()]
@@ -876,19 +931,27 @@ export class LeanStore {
         continue;
       }
       const requiredUserDecision = card?.requiredUserDecision ? String(card.requiredUserDecision).trim() : null;
+      const isProductDecision = this.isProductDecisionCard({
+        title,
+        description: String(card?.description ?? ""),
+        completionSummary: requiredUserDecision
+      });
+      const isPmOwned = this.isPmOwnedCard({
+        title,
+        description: String(card?.description ?? ""),
+        completionSummary: requiredUserDecision
+      });
       const created = this.createCard({
         companyId,
         title: title.slice(0, 140),
         description: [
-          String(card?.description ?? "").trim(),
-          "",
-          "Size constraint: complete this in about five minutes. If it is larger, split it before working."
+          String(card?.description ?? "").trim()
         ]
           .join("\n")
           .trim()
           .slice(0, 12000),
         priority: normalizeCardPriority(String(card?.priority ?? "medium")),
-        assigneeOrgNodeId: developer.id,
+        assigneeOrgNodeId: isProductDecision ? productOwner.id : isPmOwned ? pm.id : developer.id,
         goalId: goal?.id ?? null,
         dependencies: Array.isArray(card?.dependencies) ? card.dependencies.map((d) => String(d)).filter(Boolean).slice(0, 8) : [],
         risks: Array.isArray(card?.risks) ? card.risks.map((r) => String(r)).filter(Boolean).slice(0, 8) : [],
@@ -902,8 +965,12 @@ export class LeanStore {
         confidence: normalizeValueScore(card?.confidence),
         effort: normalizeValueScore(card?.effort)
       });
-      if (requiredUserDecision) {
+      if (requiredUserDecision && !isProductDecision && !isPmOwned) {
         this.updateCardStatus(created.id, "waiting_user", requiredUserDecision);
+      } else if (isProductDecision) {
+        this.updateCardStatus(created.id, "planned", "Product Owner should make this reversible product decision and record the rationale.");
+      } else if (isPmOwned) {
+        this.updateCardStatus(created.id, "planned", "PM should handle this delivery/community/value task and record the result.");
       }
       existingTitles.add(title.toLowerCase());
       createdCards += 1;

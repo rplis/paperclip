@@ -718,7 +718,7 @@ export function App() {
 
   async function kickAgentHeartbeat(agent: OrgNode) {
     if (!bootstrap) return;
-    if (agent.handle === "planner" || agent.handle === "developer") {
+    if (agent.handle === "planner" || agent.handle === "developer" || agent.handle === "product" || agent.role === "product_owner") {
       await kickAssistantHeartbeat();
       return;
     }

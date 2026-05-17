@@ -70,7 +70,7 @@ Title: ${kickoff.title}
 Description:
 ${kickoff.description}
 
-Create a detailed implementation plan and publish it as Kanban cards. Include milestones, tasks/subtasks, dependencies, priorities, execution order, required boss decisions, risks, and a measurable value hypothesis for every execution card.
+Create a detailed implementation plan and publish it as Kanban cards. Include milestones, tasks/subtasks, dependencies, priorities, execution order, required Product Owner decisions, true Boss decisions, risks, and a measurable value hypothesis for every execution card.
 
 Deliver a concise written plan. If the goal is missing a required human decision, ask @boss in the narrative and include a card that captures the blocker.
 
@@ -78,7 +78,7 @@ IMPORTANT: After the narrative, append exactly ONE markdown JSON code block. Use
 \`\`\`json
 {"cards":[{"title":"Example planning card - replace with real work","description":"Describe one concrete task that advances this specific project goal.","priority":"high","dependencies":[],"risks":["Example risk"],"requiredUserDecision":null,"valueCategory":"activation","targetMetric":"First meaningful action completion rate","baseline":"unknown; measure before change","successThreshold":"+10% relative improvement or clear qualitative learning","measurementMethod":"Compare analytics/session evidence before and after the change","expectedImpact":4,"confidence":3,"effort":2}]}
 \`\`\`
-Rules: Max 16 cards. Use only this agent model: Supervisor, PM, Planning, Developer, Recovery. PM owns value delivery, outcome metrics, milestones, and daily progress reporting. Boss owns the strategic goal, API keys, access, budget, approvals, positioning, and other high-leverage decisions. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action. Every non-blocker card must include valueCategory, targetMetric, baseline, successThreshold, measurementMethod, expectedImpact, confidence, and effort.`;
+Rules: Max 16 cards. Use only this agent model: Supervisor, PM, Product Owner, Planning, Developer, Recovery. PM owns value delivery, outcome metrics, milestones, daily progress reporting, community-feedback coordination, and growth-review work. Product Owner owns customer segment, positioning, channel focus, offer framing, and experiment-choice decisions. Developer owns concrete implementation and artifact production. Boss owns the strategic goal, API keys, access, budget approvals, legal/commercial approvals, and explicit changes to business direction. No CEO, hiring, departments, company org chart, or generic task-manager language. Every card title should name one concrete action. Every non-blocker card must include valueCategory, targetMetric, baseline, successThreshold, measurementMethod, expectedImpact, confidence, and effort.`;
 }
 
 function buildAgentTaskPrompt(input: {
@@ -132,8 +132,10 @@ Do the smallest useful unit of work for this card now. Return a concise progress
 
 Autonomy rules:
 - Try to solve the task with available context before asking @boss.
+- If the task wording says PM owns it, treat PM as the owner; do not route it through Developer.
 - If a live path, paid action, credential, private file, or strategic choice is missing, first complete every safe audit, draft, simulation, or partial deliverable that does not require it.
-- Ask @boss only for true blockers or strategic decisions that cannot be resolved safely by the agent team.
+- Route target customer, audience, positioning, channel, offer, and experiment-priority decisions to Product Owner instead of @boss.
+- Ask @boss only for credentials/API keys, private artifacts, paid/live authorization, budget approval, legal/commercial approval, or explicit changes to the top-level goal.
 - Never move a card to Waiting for Boss just because more evidence would be nice.
 
 Do not invent external state. If you truly need @boss before continuing, make the request actionable and self-contained.
@@ -197,7 +199,14 @@ function hasActionableBossAsk(parsed: AssistantTaskResult | null) {
   if (!parsed || parsed.status !== "waiting_user") return false;
   const ask = parsed.bossAsk.trim();
   if (!ask) return false;
+  if (isProductDecisionText(ask)) return false;
   return /i need|please|provide|approve|choose|confirm|grant|share|send|select|authorize|decyduj|wybierz|zatwierd/i.test(ask);
+}
+
+function isProductDecisionText(text: string) {
+  return /target customer|customer segment|audience focus|positioning|channel priorit|channel focus|offer framing|persona|first segment|which segment|choose .*segment|choose .*audience|language learners|personal readers|authors|publishers|academic users|language pair|language-pair|translation route|top .*pairs|boss-approved pairs|confirm .*pairs|prioriti[sz]e .*pairs/i.test(
+    text
+  );
 }
 
 function formatBossAskSummary(parsed: AssistantTaskResult, fallbackSummary: string) {
@@ -209,6 +218,7 @@ function formatBossAskSummary(parsed: AssistantTaskResult, fallbackSummary: stri
 }
 
 function inferBossDependency(cardTitle: string, cardDescription: string, parsed: AssistantTaskResult | null) {
+  if (isProductDecisionText(`${cardTitle}\n${cardDescription}\n${parsed?.bossAsk ?? ""}\n${parsed?.summary ?? ""}`)) return false;
   if (parsed) return hasActionableBossAsk(parsed);
   const taskText = `${cardTitle}\n${cardDescription}`;
   return /@boss|ask boss|confirm .*budget|analytics access|search console access|provide access|need .*decision|needs .*input/i.test(
@@ -585,6 +595,8 @@ async function runAssistantHeartbeat(companyId: string, options: { force: boolea
   const company = store.companies.get(companyId);
   if (!company) return { ok: false as const, httpStatus: 404 as const, error: "Project not found" };
   const planner = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "planner");
+  const pm = [...store.orgNodes.values()].find((n) => n.companyId === companyId && (n.handle === "pm" || n.role === "pm"));
+  const productOwner = [...store.orgNodes.values()].find((n) => n.companyId === companyId && (n.handle === "product" || n.role === "product_owner"));
   const developer = [...store.orgNodes.values()].find((n) => n.companyId === companyId && n.handle === "developer");
   if (!planner || !developer) return { ok: false as const, httpStatus: 404 as const, error: "Project agents not found" };
 
@@ -624,6 +636,28 @@ async function runAssistantHeartbeat(companyId: string, options: { force: boolea
     if (waitingForSupervisor) {
       const supervisor = store.runSupervisorValidation(companyId, { force: options.force });
       return { ok: true as const, heartbeat: supervisor.run, engine: null, supervisor };
+    }
+
+    if (pm) {
+      const hasOpenPmWork = [...store.cards.values()].some(
+        (card) => card.companyId === companyId && card.assigneeOrgNodeId === pm.id && card.status !== "done"
+      );
+      if (hasOpenPmWork) {
+        const heartbeat = store.runHeartbeatForAgent(pm.id, 1, { force: options.force });
+        const work = await executeAgentActiveCard(pm.id);
+        return { ok: true as const, heartbeat, ...work };
+      }
+    }
+
+    if (productOwner) {
+      const hasOpenProductWork = [...store.cards.values()].some(
+        (card) => card.companyId === companyId && card.assigneeOrgNodeId === productOwner.id && card.status !== "done"
+      );
+      if (hasOpenProductWork) {
+        const heartbeat = store.runHeartbeatForAgent(productOwner.id, 1, { force: options.force });
+        const work = await executeAgentActiveCard(productOwner.id);
+        return { ok: true as const, heartbeat, ...work };
+      }
     }
 
     const hasOpenDeveloperWork = [...store.cards.values()].some(
@@ -698,7 +732,7 @@ app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
     const company = store.companies.get(agent.companyId);
     if (!company) return res.status(404).json({ error: "Company not found" });
 
-    if (agent.handle === "planner" || agent.handle === "developer") {
+    if (agent.handle === "planner" || agent.handle === "developer" || agent.handle === "product" || agent.role === "product_owner") {
       const out = await runAssistantHeartbeat(agent.companyId, { force: true });
       if (!out.ok) {
         res.status(out.httpStatus).json({ error: out.error });
@@ -709,6 +743,18 @@ app.post("/api/agents/:agentId/heartbeat", async (req, res) => {
     }
 
     if (agent.handle === "pm" || agent.role === "pm") {
+      const hasOpenPmWork = [...store.cards.values()].some(
+        (card) => card.companyId === agent.companyId && card.assigneeOrgNodeId === agent.id && card.status !== "done"
+      );
+      if (hasOpenPmWork) {
+        const out = await runAssistantHeartbeat(agent.companyId, { force: true });
+        if (!out.ok) {
+          res.status(out.httpStatus).json({ error: out.error });
+          return;
+        }
+        res.json(out);
+        return;
+      }
       const out = store.runHeartbeatForAgent(agent.id, 0, { force: true });
       const report = store.generateDailyReport(agent.companyId);
       res.json({ ...out, report });
